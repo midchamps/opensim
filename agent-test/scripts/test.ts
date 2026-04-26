@@ -8,7 +8,7 @@ import {
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { allTestCases } from '../test-cases/game-test.js';
+import { allTestCases } from '../test-cases/sim-test.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

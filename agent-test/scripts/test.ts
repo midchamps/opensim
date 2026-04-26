@@ -46,7 +46,8 @@ function getTestCase(): { id: string; name: string; prompt: string } {
 async function prepareTestEnvironment(outputDir: string): Promise<void> {
   await fs.mkdir(outputDir, { recursive: true });
 
-  const customPromptPath = path.join(PROJECT_ROOT, 'prompts', 'custom.md');
+  // OpenSim system prompt — drives the 6-Phase simulator workflow.
+  const customPromptPath = path.join(PROJECT_ROOT, 'prompts', 'sim-custom.md');
   const outputQwenDir = path.join(outputDir, '.qwen');
   const outputSystemMd = path.join(outputQwenDir, 'system.md');
 
@@ -97,21 +98,26 @@ async function test(): Promise<TestResult> {
       prompt: testCase.prompt,
       options: {
         cwd: outputDir,
-        model: 'anthropic/claude-opus-4.6',
+        // Model + endpoint flow through `.env` (process.env) so the user's
+        // OpenSim provider config (Gemini by default) drives this run.
+        // Override via OPENAI_MODEL / OPENAI_BASE_URL / OPENAI_API_KEY in
+        // the project root .env file. The previous OpenGame default of
+        // hard-coding OpenRouter+Claude is intentionally removed.
+        model: process.env.OPENAI_MODEL || 'gemini-3-pro-preview',
         authType: 'openai',
         env: {
           ...process.env,
-          OPENAI_BASE_URL: 'https://openrouter.ai/api/v1',
-          OPENAI_API_KEY: process.env.OPENROUTER_API_KEY || '',
           QWEN_SYSTEM_MD: '1',
           HOME: process.env.HOME || process.env.USERPROFILE || '',
           USERPROFILE: process.env.USERPROFILE || process.env.HOME || '',
-          REASONING_MODEL_API_KEY: process.env.REASONING_MODEL_API_KEY || '',
-          IMAGE_MODEL_API_KEY: process.env.IMAGE_MODEL_API_KEY || '',
+          // OpenSim path hints (consumed by classify_simulation_type).
+          // Game-domain hints kept for upstream cherry-picks but ignored
+          // by the simulation tools.
+          SIM_TEMPLATES_DIR: path.join(PROJECT_ROOT, 'templates'),
+          SIM_DOCS_DIR: path.join(PROJECT_ROOT, 'docs'),
           GAME_TEMPLATES_DIR: path.join(PROJECT_ROOT, 'templates'),
           GAME_DOCS_DIR: path.join(PROJECT_ROOT, 'docs'),
           // Prepend custom bin dir to PATH if tools like ffmpeg are installed elsewhere.
-          // Adjust this path to match your environment (e.g., conda, homebrew, etc.).
           PATH: `${process.env.CUSTOM_BIN_DIR || ''}${process.env.CUSTOM_BIN_DIR ? ':' : ''}${process.env.PATH || '/usr/bin:/bin'}`,
           MODEL_REQUEST_TIMEOUT: '1200000',
         },

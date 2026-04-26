@@ -1,14 +1,14 @@
 /**
  * Measurement & control widgets (3D meshes on the workbench).
  *
- * Phase 2 will add:
  *   - Dial — rotating knob bound to a numeric simConfig field
- *   - Button3D — Run / Pause / Reset
- *   - DigitalReadout — LCD-style numeric display
- *   - ChartMonitor — Plotly canvas baked onto a wall-mounted screen mesh
- *   - ExportButton — triggers CSV/JSON download of an Observable history
+ *   - Button3D — Run / Pause / Reset / Step / Export, with depress feedback
+ *   - DigitalReadout — LCD-style numeric display for live observables
+ *   - ChartMonitor (Phase 2.3) — Plotly-style time-series on a wall mesh
  *
- * All instruments are KEEP — the agent imports and parameterizes, never
- * rewrites their internals.
+ * All instruments are KEEP — the agent imports and parameterizes them,
+ * never rewrites the internals.
  */
-export {};
+export { Dial, type DialProps } from './Dial';
+export { Button3D, type Button3DProps, type Button3DKind } from './Button3D';
+export { DigitalReadout, type DigitalReadoutProps } from './DigitalReadout';

@@ -30,6 +30,10 @@ export const ToolNames = {
   GAME_TYPE_CLASSIFIER: 'classify_game_type',
   GENERATE_GDD: 'generate_gdd',
   //COPY_TEMPLATE: 'copy_template',
+  // OpenSim simulation-domain tools (Phase 3+).
+  SIMULATION_TYPE_CLASSIFIER: 'classify_simulation_type',
+  GENERATE_PROTOCOL: 'generate_protocol',
+  GENERATE_SIMULATION_ASSETS: 'generate_simulation_assets',
 } as const;
 
 /**
@@ -58,6 +62,9 @@ export const ToolDisplayNames = {
   GAME_TYPE_CLASSIFIER: 'GameTypeClassifier',
   GENERATE_GDD: 'GenerateGDD',
   //COPY_TEMPLATE: 'CopyTemplate',
+  SIMULATION_TYPE_CLASSIFIER: 'SimulationTypeClassifier',
+  GENERATE_PROTOCOL: 'GenerateProtocol',
+  GENERATE_SIMULATION_ASSETS: 'GenerateSimulationAssets',
 } as const;
 
 // Migration from old tool names to new tool names

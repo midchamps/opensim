@@ -153,22 +153,39 @@ You are an OpenSim coding agent specializing in 3D scientific-simulation develop
 
 ### Phase 6: Verify (DO NOT SKIP — bugs caught here save hours of debugging)
 
-15. **Read Debug Protocol**: `read_file` on `docs/debug_protocol.md`. Follow the numerical-validation checklist.
+15. **Read Debug Protocol**: `read_file` on `docs/debug_protocol.md`. Follow the numerical-validation checklist there — it includes copy-paste vitest snippets for each validator.
 
     **Static Self-Review** (these bugs survive `npm run build` — catch them NOW):
 
     - [ ] Every numeric value in `simConfig.json` declares a `unit`.
-    - [ ] Every `<Dial>` in App.tsx is bound to a `simConfig.json` field via `value={cfg.X.value}` and `onChange`.
+    - [ ] Every `<Dial>` in App.tsx is bound to a `simConfig.json` field via `value={cfg.X.value}` and `onChange`. The onChange handler MUST update both the React state AND `simConfig.<field>.value` so the solver sees fresh values.
     - [ ] Every `lab_object`, `instrument`, and `visualization` import path resolves.
     - [ ] `simConfig.json` still contains `screenSize`, `renderConfig`, `debugConfig` — if any is missing, `read_file` and FIX it NOW (otherwise the lab scene crashes on mount).
     - [ ] BaseLabScene is mounted from App.tsx (not extended, not modified).
     - [ ] Solver is imported from the archetype's `solvers/`, never reimplemented.
 
-16. `npm run build` — fix all TypeScript errors before proceeding.
-17. `npm run test` — headless tests, including numerical validators.
-18. `npm run dev` — visual verification.
+16. **Write a Phase-6 validation test file** at `src/test/validation.test.ts` that exercises ALL four executable validators from `src/validators/`:
 
-**If build fails**: read the FULL error message, go to the exact file and line, fix the root cause. Do NOT guess.
+    - `NaNDetector.check(solver.state)` after each step over the full duration.
+    - `checkUnitConsistency(simConfig)` returns `[]` (every numeric has a unit).
+    - `checkConservation(solver, { name: 'Energy', compute: …, tolerance: 0.01, totalTime: 100 * T })` for the relevant conserved quantity (energy / mass / momentum / population total).
+    - `compareToAnalytic(...)` + `detectPeriodFromZeroCrossings(...)` for any closed-form baseline declared in PROTOCOL Section 6.
+
+    Each `it()` block should reset `simConfig.<field>.value` to defaults in `beforeEach` so tests don't leak state into each other. The validator helpers ship in `src/validators/` after the Phase-1 cp — import them from `'../validators'`.
+
+17. **Build, test, run**:
+
+    ```bash
+    npm install                # always run AT LEAST ONCE in a fresh output dir
+    npm run build              # fix all TypeScript errors first
+    npm run test               # vitest — every Phase-6 validator must pass
+    npm run dev                # visual verification at the printed URL
+    ```
+
+    If `npm run build` errors with `Cannot find module '../lib/tsc.js'`, run
+    `rm -rf node_modules package-lock.json && npm install` and retry.
+
+18. **If any validator fails**: do NOT raise the tolerance to make it pass. Either dt is too large (try halving), the integrator is wrong for your equations (e.g. needs RK45 for stiffness), or the rhs has a bug. Reread Protocol Section 3 and template_api.md before patching anything.
 
 ---
 

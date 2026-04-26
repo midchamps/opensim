@@ -6,4 +6,4 @@
  *   that need a specialized environment (e.g. `agent_based` wants
  *   PetriDish on the desk by default).
  */
-export {};
+export { BaseLabScene, type BaseLabSceneProps } from './BaseLabScene';

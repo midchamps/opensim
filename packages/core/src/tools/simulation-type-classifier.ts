@@ -6,8 +6,10 @@ import {
   type ToolResult,
 } from './tools.js';
 import { ToolErrorType } from './tool-error.js';
+// eslint-disable-next-line import/no-internal-modules
 import type { Config } from '../config/config.js';
 import { ToolNames, ToolDisplayNames } from './tool-names.js';
+// eslint-disable-next-line import/no-internal-modules
 import { resolveProviderConfig } from '../services/providerConfig.js';
 
 /**
@@ -24,7 +26,8 @@ export type SimulationArchetype =
   | 'pde_grid'
   | 'agent_based'
   | 'monte_carlo'
-  | 'cellular_automata';
+  | 'cellular_automata'
+  | 'interactive_protocol';
 
 export interface SimulationTypeClassifierParams {
   /** User's simulation idea, hypothesis, or problem description. */
@@ -63,7 +66,8 @@ export interface NumericProfile {
     | 'pde_stencil'
     | 'agent_step'
     | 'sampler'
-    | 'cell_update';
+    | 'cell_update'
+    | 'protocol_state_machine';
 }
 
 export interface SimulationClassificationResult {
@@ -125,11 +129,11 @@ class SimulationTypeClassifierInvocation extends BaseToolInvocation<
   }
 
   private buildSystemPrompt(): string {
-    return `# Simulation Type Classifier (Numerical-Scheme First)
+    return `# Simulation Type Classifier
 
-You are a numerical-methods analyzer. Classify simulation requests by the *solver class that dominates the dynamics*, NOT by the scientific domain (biology vs. physics vs. economics doesn't matter — pendulum dynamics, predator-prey populations, and RC circuits are all the same archetype because they're all systems of ODEs).
+You analyze simulation requests and classify them by the *solver class that dominates the dynamics*. For NUMERICAL simulations the scientific domain doesn't matter (pendulum dynamics, predator-prey populations, and RC circuits are all the same archetype because they're all systems of ODEs). For PROCEDURAL / interactive lab simulations a separate sixth archetype applies.
 
-## Five Archetypes
+## Six Archetypes
 
 ### 1. ode_system (Continuous time, finite state vector)
 **State**: A finite-dimensional state vector y(t).
@@ -166,6 +170,13 @@ You are a numerical-methods analyzer. Classify simulation requests by the *solve
 **Examples**: Conway's Game of Life, Wolfram elementary CA (Rule 30, etc.), forest-fire model, lattice-gas automata, sand-pile / Bak-Tang-Wiesenfeld, simple Ising model on a lattice (Glauber dynamics).
 **Key question**: Are cells in a discrete state set updated by a *local* rule on each tick?
 
+### 6. interactive_protocol (Discrete user-driven steps, no continuous dynamics)
+**State**: A finite-state machine over named procedure steps (intro → step 1 → step 2 → … → done) plus an animProgress timer for inter-step transitions.
+**Evolution**: state advances when the user PERFORMS A LAB ACTION (click, drag-drop, press) on the active object for the current step. Each step has a "required" action count.
+**Solver**: protocol state machine + UI event handlers + transition tweens.
+**Examples**: strawberry DNA extraction, acid-base titration, gel electrophoresis, gram staining, baking-soda + vinegar volcano, simple distillation, flame test, paper chromatography, bread-baking workflow, recipe-style chemistry experiments.
+**Key question**: Is the simulation primarily a SEQUENCE OF USER ACTIONS that progress through a procedure, rather than a continuous evolution of state under solver dynamics?
+
 ## Disambiguation Rules
 
 - A reaction-diffusion equation is **pde_grid** (continuous concentrations on a grid), even though it superficially looks like CA.
@@ -174,19 +185,21 @@ You are a numerical-methods analyzer. Classify simulation requests by the *solve
 - Particle-in-cell methods (PIC) are best modelled as **pde_grid** with auxiliary particles; classify as pde_grid.
 - A pendulum simulated with a stochastic kick is still **ode_system** (use Euler-Maruyama). Pure Monte Carlo means the trajectory itself is incidental — only statistics matter.
 - A neural network simulation depends: continuous-time spiking model (Hodgkin-Huxley) → ode_system. Discrete time-step learning rules over many neurons → agent_based.
+- **Procedural lab activity vs numerical**: if the user's role is to PERFORM A SEQUENCE of physical lab actions (mash this, pour that, drag here), classify as **interactive_protocol** even when the underlying chemistry is continuous. If the user's role is mostly to TWIDDLE PARAMETERS and observe emergent dynamics, classify by the underlying numerical scheme.
+- A volcano (baking soda + vinegar) where the user drops vinegar to trigger a reaction is **interactive_protocol** (the reaction visual is decorative); a wave-equation simulator with a few "drop" buttons is still **pde_grid**.
 
 ## Output Format
 
 Respond with ONLY a JSON object (no markdown fences, no commentary outside JSON):
 
 {
-  "archetype": "ode_system" | "pde_grid" | "agent_based" | "monte_carlo" | "cellular_automata",
-  "reasoning": "One or two sentences explaining the chosen archetype based on the numerical scheme.",
+  "archetype": "ode_system" | "pde_grid" | "agent_based" | "monte_carlo" | "cellular_automata" | "interactive_protocol",
+  "reasoning": "One or two sentences explaining the chosen archetype based on the dominant solver / interaction pattern.",
   "numericProfile": {
     "hasSpatialDomain": true | false,
     "timeEvolution": "continuous" | "discrete",
     "stochastic": true | false,
-    "solverClass": "time_integrator" | "pde_stencil" | "agent_step" | "sampler" | "cell_update"
+    "solverClass": "time_integrator" | "pde_stencil" | "agent_step" | "sampler" | "cell_update" | "protocol_state_machine"
   }
 }
 `;
@@ -247,11 +260,15 @@ Think about: independent variables (time only / space + time / discrete), state 
   private parseClassification(result: string): SimulationClassificationResult {
     let jsonStr = result.trim();
     if (jsonStr.startsWith('```')) {
-      jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+      jsonStr = jsonStr
+        .replace(/```json?\n?/g, '')
+        .replace(/```/g, '')
+        .trim();
     }
     try {
       const parsed = JSON.parse(jsonStr);
-      const archetype = (parsed.archetype as SimulationArchetype) || 'ode_system';
+      const archetype =
+        (parsed.archetype as SimulationArchetype) || 'ode_system';
       return {
         archetype,
         reasoning: parsed.reasoning || 'No reasoning provided',
@@ -265,6 +282,7 @@ Think about: independent variables (time only / space + time / discrete), state 
         'agent_based',
         'monte_carlo',
         'cellular_automata',
+        'interactive_protocol',
       ];
       for (const arch of archetypes) {
         if (result.toLowerCase().includes(arch)) {
@@ -286,8 +304,7 @@ Think about: independent variables (time only / space + time / discrete), state 
   private formatLLMContent(result: SimulationClassificationResult): string {
     // Allow override via env so the agent can run in a worktree without
     // hard-coded absolute paths. Falls back to the layout we ship.
-    const templatesDir =
-      process.env.SIM_TEMPLATES_DIR || '../../templates';
+    const templatesDir = process.env.SIM_TEMPLATES_DIR || '../../templates';
     const docsDir = process.env.SIM_DOCS_DIR || '../../docs';
 
     return `<classification>
@@ -348,6 +365,8 @@ Next: Call \`generate_protocol\` tool with:
         'Stochastic sampling toward statistical convergence (π estimation, MCMC, option pricing)',
       cellular_automata:
         'Discrete cells, discrete time, local rules (Conway, Wolfram, sand pile)',
+      interactive_protocol:
+        'User-driven discrete steps (lab procedures: DNA extraction, titration, gel electrophoresis)',
     };
 
     return `**Simulation Type Classification**
@@ -399,6 +418,13 @@ function defaultProfile(arch: SimulationArchetype): NumericProfile {
         timeEvolution: 'discrete',
         stochastic: false,
         solverClass: 'cell_update',
+      };
+    case 'interactive_protocol':
+      return {
+        hasSpatialDomain: false,
+        timeEvolution: 'discrete',
+        stochastic: false,
+        solverClass: 'protocol_state_machine',
       };
     case 'ode_system':
     default:

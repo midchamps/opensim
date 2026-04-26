@@ -6,8 +6,10 @@ import {
   type ToolResult,
 } from './tools.js';
 import { ToolErrorType } from './tool-error.js';
+// eslint-disable-next-line import/no-internal-modules
 import type { Config } from '../config/config.js';
 import { ToolNames, ToolDisplayNames } from './tool-names.js';
+// eslint-disable-next-line import/no-internal-modules
 import { resolveProviderConfig } from '../services/providerConfig.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -186,7 +188,9 @@ does for games.
 
 `;
 
-    prompt += core ? `---\n\n## Universal Protocol Rules\n\n${core}\n\n` : this.getBuiltinCoreRules();
+    prompt += core
+      ? `---\n\n## Universal Protocol Rules\n\n${core}\n\n`
+      : this.getBuiltinCoreRules();
     prompt += designRules
       ? `---\n\n## ${archetype.toUpperCase()} Design Guide\n\n${designRules}\n\n`
       : this.getBuiltinArchetypeStub(archetype);
@@ -362,6 +366,8 @@ The Protocol Document is a **Technical Specification**. Each section is the cont
         'Random sampler + variance-reduction strategy. Section 3 must specify the RNG, sample count, and convergence criterion. Section 6 should include analytic-baseline comparisons where available.',
       cellular_automata:
         'Cell grid + local transition rule. Section 3 must specify grid size, rule definition, and (sync vs async) update mode. Section 6 should include pattern-stability checks (density, period detection).',
+      interactive_protocol:
+        'Discrete protocol state machine + drag/click handlers. Section 3 must list the procedure as ordered steps, each with id / title / instruction / required-action-count. Section 6 should include step-machine integrity, no-skipping enforcement, and qualitative end-state checks (visual outcome matches real-world expectation).',
     };
     return `---
 
@@ -422,7 +428,7 @@ export class GenerateProtocolTool extends BaseDeclarativeTool<
           raw_user_requirement: {
             type: 'string',
             description:
-              'The user\'s simulation idea, verbatim. Echo back what they typed in the prompt.',
+              "The user's simulation idea, verbatim. Echo back what they typed in the prompt.",
           },
           archetype: {
             type: 'string',
@@ -452,7 +458,10 @@ export class GenerateProtocolTool extends BaseDeclarativeTool<
   protected override validateToolParamValues(
     params: GenerateProtocolParams,
   ): string | null {
-    if (!params.raw_user_requirement || params.raw_user_requirement.trim() === '') {
+    if (
+      !params.raw_user_requirement ||
+      params.raw_user_requirement.trim() === ''
+    ) {
       return 'raw_user_requirement must be a non-empty string';
     }
     if (!params.archetype) return 'archetype is required';
@@ -462,6 +471,10 @@ export class GenerateProtocolTool extends BaseDeclarativeTool<
   protected createInvocation(
     params: GenerateProtocolParams,
   ): ToolInvocation<GenerateProtocolParams, ToolResult> {
-    return new GenerateProtocolInvocation(this.config, params, this.modelConfig);
+    return new GenerateProtocolInvocation(
+      this.config,
+      params,
+      this.modelConfig,
+    );
   }
 }

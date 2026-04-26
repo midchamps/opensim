@@ -1,22 +1,23 @@
 /**
- * Placeholder simulation test prompts for the OpenSim integration runner.
+ * Simulation test prompts for the OpenSim integration runner.
  *
- * Phase 1 ships only one stub case so `agent-test/scripts/test.ts` can
- * import something compilable. Phase 4 (ODE archetype golden case)
- * replaces this with the real damped-pendulum prompt from the analysis
- * document §10.5, plus a small zoo of simulation prompts covering the
- * five archetypes once they exist.
+ * `pendulumGoldenCase` is the Phase-4 / Gate-4 MVP target: one short
+ * sentence the agent must turn into a working damped-pendulum simulator
+ * end-to-end. The prompt is deliberately terse — the system prompt
+ * (`prompts/sim-custom.md`) does the heavy lifting on workflow
+ * discipline.
+ *
+ * Phase 6+ adds prompts for additional archetypes (boids for
+ * agent_based, heat-diffusion for pde_grid, etc.).
  */
 
-export const pendulumStubTestCase = {
-  id: 'damped-pendulum-stub',
-  name: 'PendulumStub',
-  prompt: `Build a damped pendulum simulator. The user should see a 3D pendulum on a workbench, with three knobs (length, mass, damping coefficient) and Run / Pause / Reset buttons. Plot angle vs time and a phase portrait on wall-mounted monitors.
-
-NOTE: this prompt is a Phase-1 placeholder. The full archetype templates and tools land in Phase 3-4; running this case now will not produce a working simulator.`,
+export const pendulumGoldenCase = {
+  id: 'damped-pendulum',
+  name: 'DampedPendulum',
+  prompt: `Build a damped pendulum simulator. The user should see a 3D pendulum on a workbench, with three knobs to adjust length / mass / damping coefficient, plus Run / Pause / Reset buttons. Show angle vs time and a phase portrait on wall-mounted monitors. Make small-angle motion match T = 2π√(L/g) within 2%.`,
 };
 
 export const allTestCases = {
-  default: pendulumStubTestCase,
-  pendulum: pendulumStubTestCase,
+  default: pendulumGoldenCase,
+  pendulum: pendulumGoldenCase,
 };

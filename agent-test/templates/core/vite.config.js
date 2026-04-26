@@ -15,8 +15,11 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    setupFiles: ['src/test/setup.ts'],
-    include: ['src/test/**/*.{test,spec,test.tsx,spec.tsx}'],
+    // Match `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`. The
+    // earlier glob `*.{test,spec,test.tsx,spec.tsx}` expanded to the
+    // wrong set — `.ts` test files were silently skipped, which made
+    // Phase-5 validator tests look like they ran when they didn't.
+    include: ['src/test/**/*.{test,spec}.{ts,tsx}'],
     testTimeout: 10000,
     coverage: {
       provider: 'v8',

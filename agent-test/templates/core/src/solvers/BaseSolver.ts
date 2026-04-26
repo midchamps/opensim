@@ -35,7 +35,13 @@ export abstract class BaseSolver<S> {
   protected _rafId: number | null = null;
   protected _lastWallTime = 0;
   protected _accumulator = 0;
-  protected readonly dt: number;
+  /**
+   * Fixed integration step (seconds). Public so validator helpers
+   * (e.g. `checkConservation`) can read it without casting through
+   * `as any`. Read-only because changing dt mid-run would invalidate
+   * the integrator's accuracy guarantees.
+   */
+  readonly dt: number;
   private observers: Set<SolverObserver<S>> = new Set();
 
   constructor(config: BaseSolverConfig) {

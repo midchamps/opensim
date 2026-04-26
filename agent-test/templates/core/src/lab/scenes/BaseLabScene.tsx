@@ -2,6 +2,7 @@ import { type ReactNode } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, ContactShadows } from '@react-three/drei';
 import simConfig from '../../simConfig.json';
+import { useLabStore } from '../interactions/labStore';
 
 const SHADOWS_ENABLED = simConfig.renderConfig.shadows.value;
 const ANTIALIAS_ENABLED = simConfig.renderConfig.antialias.value;
@@ -43,6 +44,10 @@ export function BaseLabScene({
   deskColor = '#8b6f4e',
   floorColor = '#1a1a26',
 }: BaseLabSceneProps) {
+  // Disable OrbitControls while any instrument is being dragged or
+  // pressed, so the camera doesn't spin when the user is trying to
+  // rotate a Dial. DragRotate / ClickPress maintain the counter.
+  const orbitEnabled = !useLabStore((s) => s.isInstrumentActive);
   return (
     <Canvas
       shadows={SHADOWS_ENABLED}
@@ -143,8 +148,9 @@ export function BaseLabScene({
       {/* --- User content (lab_objects, instruments, visualization) --- */}
       <group position={[0, 0, 0]}>{children}</group>
 
-      {/* --- Camera controls --- */}
+      {/* --- Camera controls (auto-paused during instrument drags) --- */}
       <OrbitControls
+        enabled={orbitEnabled}
         enablePan
         enableZoom
         enableRotate

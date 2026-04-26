@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from 'react';
 import { type ThreeEvent } from '@react-three/fiber';
 import { type Group } from 'three';
+import { useLabStore } from './labStore';
 
 /**
  * Wraps children in a group whose Y-axis rotation is driven by the
@@ -38,10 +39,15 @@ export function DragRotate({
     startValue: number;
   } | null>(null);
 
+  const beginInteraction = useLabStore((s) => s.beginInstrumentInteraction);
+  const endInteraction = useLabStore((s) => s.endInstrumentInteraction);
+
   const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
     (event.target as Element).setPointerCapture?.(event.pointerId);
     dragState.current = { startX: event.clientX, startValue: value };
+    // Pause OrbitControls while the dial is being dragged.
+    beginInteraction();
   };
 
   const handlePointerMove = (event: ThreeEvent<PointerEvent>) => {
@@ -57,7 +63,10 @@ export function DragRotate({
 
   const handlePointerUp = (event: ThreeEvent<PointerEvent>) => {
     (event.target as Element).releasePointerCapture?.(event.pointerId);
-    dragState.current = null;
+    if (dragState.current) {
+      dragState.current = null;
+      endInteraction();
+    }
   };
 
   return (

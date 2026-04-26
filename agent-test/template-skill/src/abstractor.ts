@@ -2,8 +2,6 @@ import type {
   ExtractedPatterns,
   AbstractedTemplates,
   TemplateFileDef,
-  HookDef,
-  ConfigField,
 } from './types.js';
 import { getAbstractorConfig, type LLMConfig } from './config.js';
 
@@ -65,24 +63,42 @@ async function callLLM(
 // -----------------------------------------------------------------------------
 
 function buildSystemPrompt(): string {
-  return `# Template Abstractor
+  return `# OpenSim Template Abstractor
 
-You are a code analysis expert. Your task is to take CONCRETE game code extracted
-from a completed project and generalize it into REUSABLE template code.
+You are a numerical-methods code analyst. Your task is to take CONCRETE
+simulator code extracted from a completed project and generalize it into
+REUSABLE archetype-template code suitable for being checked in under
+\`agent-test/templates/modules/<archetype>/\`.
 
 ## Your Goals
 
-1. **Identify stable patterns**: Code that would appear in ANY game of this type
-   (e.g., gravity setup for platformers, grid initialization for grid logic)
-2. **Replace game-specific content** with generic placeholders:
-   - Specific character names → "Player", "Enemy", "Entity"
-   - Hardcoded values → config references (gameConfig.xxx.value)
-   - Specific texture keys → placeholder_texture comments
-   - Specific dialogue → TODO comments
-3. **Preserve the architecture**: Keep class hierarchies, hook patterns, and
-   lifecycle methods intact
-4. **Mark extension points**: Add TODO/override comments where game-specific
-   customization should happen
+1. **Identify stable patterns**: Code that would appear in ANY simulator of
+   this archetype:
+   - ODE: BaseODE / RK4 (KEEP), \`rhs(t, y)\` / \`initialState()\` overrides,
+     observable helpers (computeKE, computePE, computeE_total).
+   - PDE: BasePDE / Laplacian5 (KEEP), per-step stencil application,
+     boundary-condition helpers.
+   - agent_based: BaseAgent (KEEP), \`updateAgent(self, neighbors, dt)\`,
+     spatial-neighbor helpers.
+   - monte_carlo: BaseMC (KEEP), sampler, variance-reduction helpers.
+   - cellular_automata: BaseCA (KEEP), transition rule, neighbor mask.
+
+2. **Replace simulator-specific content** with generic placeholders:
+   - Specific class names ("DampedPendulumODE") → "_TemplateODE"
+   - Hardcoded values in \`rhs()\` / \`updateAgent()\` → references via
+     \`simConfig.<field>.value\`
+   - Specific state-vector indices ([0]=theta, [1]=omega) → TODO comment
+     marking the agent should pick its own state shape
+   - Specific observables (E_total) → leave a TODO showing the pattern
+
+3. **Preserve the architecture**: Keep BaseSolver / BaseODE / BaseAgent
+   class hierarchies, abstract method signatures, and lifecycle hooks
+   intact. Do NOT rename hooks (\`step\`, \`rhs\`, \`updateAgent\`,
+   \`initialState\`) — those names are part of the contract.
+
+4. **Mark extension points**: Add \`// TODO\` comments where simulation-
+   specific customisation should happen (RHS expression, initial
+   conditions, agent count, integrator step size).
 
 ## Output Format
 
@@ -90,33 +106,42 @@ Return a JSON object with this structure:
 {
   "templateFiles": [
     {
-      "relativePath": "src/scenes/BaseLevelScene.ts",
+      "relativePath": "src/solvers/_TemplateODE.ts",
       "content": "// ... generalized TypeScript code ...",
-      "role": "base_class" | "copy_template" | "system" | "behavior" | "utility"
+      "role": "base_class" | "copy_template" | "integrator" | "validator" | "lab_object" | "visualization" | "utility"
     }
   ],
-  "summary": "Brief description of what this template family provides"
+  "summary": "Brief description of what this archetype family provides"
 }
 
 ## Rules
-- Output VALID JSON only (no markdown fences around the top-level JSON)
-- Template file contents should be valid TypeScript
-- Keep imports but generalize paths where needed
-- base_class: Engine code that should NOT be modified (KEEP files)
-- copy_template: Files meant to be copied and customized (_Template* pattern)
-- system: Reusable system managers (BoardManager, WaveManager, etc.)
-- behavior: Reusable behavior components (PatrolAI, MeleeAttack, etc.)
-- utility: Shared utility functions`;
+- Output VALID JSON only (no markdown fences around the top-level JSON).
+- Template file contents must be valid TypeScript.
+- Keep imports but generalize paths (use deploy-time relative paths like
+  \`./BaseSolver\` not source-repo paths like \`../../core/src/solvers/BaseSolver\`).
+- **base_class**: Engine code that should NOT be modified by the agent
+  (BaseSolver, BaseODE, RK4, BaseAgent, NaNDetector, etc.).
+- **copy_template**: Files meant to be copied and customised
+  (\`_Template*.ts\`).
+- **integrator**: Concrete integrators / steppers that ship with the
+  archetype (RK4, RK45, Laplacian5).
+- **validator**: Phase-5 validators (NaNDetector, checkUnitConsistency,
+  checkConservation, compareToAnalytic).
+- **lab_object**: 3D scene objects bound to solver state (Pendulum,
+  AgentSwarm, HeatPanel).
+- **visualization**: Wall-monitor visualisers (TimeSeriesPlot,
+  PhasePortrait, Heatmap).
+- **utility**: Cross-cutting helpers (observables.ts).`;
 }
 
 function buildUserPrompt(patterns: ExtractedPatterns): string {
   const parts: string[] = [];
 
   parts.push(`## Archetype: ${patterns.archetype}`);
+  const np = patterns.numericProfile;
   parts.push(
-    `## Physics: gravity=${patterns.physicsProfile.hasGravity}, ` +
-      `perspective=${patterns.physicsProfile.perspective}, ` +
-      `movement=${patterns.physicsProfile.movementType}`,
+    `## Numeric profile: spatial=${np.hasSpatialDomain}, time=${np.timeEvolution}, ` +
+      `stochastic=${np.stochastic}, solver=${np.solverClass}`,
   );
 
   // File structure
@@ -146,9 +171,12 @@ function buildUserPrompt(patterns: ExtractedPatterns): string {
 
   // Config extensions
   if (patterns.configExtensions.length > 0) {
-    parts.push('\n## Config Extensions (beyond M0 baseline)');
+    parts.push('\n## simConfig Extensions (beyond M0 baseline)');
     for (const cf of patterns.configExtensions) {
-      parts.push(`- ${cf.path}: ${JSON.stringify(cf.value)} (${cf.type})`);
+      const unit = cf.unit ? ` [${cf.unit}]` : '';
+      parts.push(
+        `- ${cf.path}: ${JSON.stringify(cf.value)} (${cf.type})${unit}`,
+      );
     }
   }
 
@@ -161,10 +189,11 @@ function buildUserPrompt(patterns: ExtractedPatterns): string {
   }
 
   parts.push(
-    '\n\nGeneralize this into a reusable template family. ' +
-      'Replace game-specific content with placeholders. ' +
-      'Focus on the BASE CLASSES and SYSTEMS that would be reusable across different games of this archetype. ' +
-      'Output JSON only.',
+    '\n\nGeneralize this into a reusable archetype-template family for the OpenSim ' +
+      'templates/modules/<archetype>/ tree. Replace simulator-specific content with ' +
+      'placeholders and `simConfig.<field>.value` references. Focus on the BASE CLASSES, ' +
+      'INTEGRATORS, and VALIDATOR usage that would be reusable across different ' +
+      'simulators of this archetype. Output JSON only.',
   );
 
   return parts.join('\n');
@@ -185,15 +214,12 @@ interface LLMAbstractionResponse {
 
 function parseLLMResponse(raw: string): LLMAbstractionResponse {
   let jsonStr = raw.trim();
-
-  // Strip markdown code fences if present
   if (jsonStr.startsWith('```')) {
     jsonStr = jsonStr
       .replace(/```json?\n?/g, '')
       .replace(/```/g, '')
       .trim();
   }
-
   return JSON.parse(jsonStr) as LLMAbstractionResponse;
 }
 
@@ -204,21 +230,44 @@ function parseLLMResponse(raw: string): LLMAbstractionResponse {
 function abstractByRules(patterns: ExtractedPatterns): AbstractedTemplates {
   const templateFiles: TemplateFileDef[] = [];
 
-  // Promote base classes from the extracted code
   for (const [filePath, code] of Object.entries(patterns.codeSnippets)) {
-    if (/Base\w+/.test(filePath)) {
+    if (/Base\w+\.ts$/.test(filePath)) {
       templateFiles.push({
         relativePath: filePath,
         content: code,
         role: 'base_class',
       });
-    } else if (/_Template\w+/.test(filePath)) {
+    } else if (/_Template\w+\.ts$/.test(filePath)) {
       templateFiles.push({
         relativePath: filePath,
         content: code,
         role: 'copy_template',
       });
-    } else if (/utils\.ts$/.test(filePath)) {
+    } else if (/(?:RK4|RK45|Laplacian|Stencil)\.ts$/.test(filePath)) {
+      templateFiles.push({
+        relativePath: filePath,
+        content: code,
+        role: 'integrator',
+      });
+    } else if (/validators\/\w+\.ts$/.test(filePath)) {
+      templateFiles.push({
+        relativePath: filePath,
+        content: code,
+        role: 'validator',
+      });
+    } else if (/lab\/lab_objects\/\w+\.tsx?$/.test(filePath)) {
+      templateFiles.push({
+        relativePath: filePath,
+        content: code,
+        role: 'lab_object',
+      });
+    } else if (/lab\/visualization\/\w+\.tsx?$/.test(filePath)) {
+      templateFiles.push({
+        relativePath: filePath,
+        content: code,
+        role: 'visualization',
+      });
+    } else if (/observables\.ts$/.test(filePath)) {
       templateFiles.push({
         relativePath: filePath,
         content: code,
@@ -243,7 +292,7 @@ function abstractByRules(patterns: ExtractedPatterns): AbstractedTemplates {
 // -----------------------------------------------------------------------------
 
 /**
- * Abstract extracted patterns into generalized, reusable templates.
+ * Abstract extracted patterns into generalized, reusable archetype templates.
  * Tries LLM first, falls back to rule-based extraction.
  */
 export async function abstractPatterns(

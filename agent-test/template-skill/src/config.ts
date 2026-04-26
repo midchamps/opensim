@@ -19,12 +19,12 @@ export const LIBRARY_JSON_PATH = path.join(OUTPUT_PATH, 'library.json');
 /** Path to evolved family directories */
 export const FAMILIES_PATH = path.join(OUTPUT_PATH, 'families');
 
-/** M0's core gameConfig.json — used as baseline for diff */
-export const M0_GAME_CONFIG_PATH = path.join(
+/** M0's core simConfig.json — used as baseline for diff */
+export const M0_SIM_CONFIG_PATH = path.join(
   META_TEMPLATE_PATH,
   'core',
   'src',
-  'gameConfig.json',
+  'simConfig.json',
 );
 
 // -----------------------------------------------------------------------------

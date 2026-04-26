@@ -1,23 +1,37 @@
 // =============================================================================
-// Template Skill — Core Type Definitions
+// Template Skill — Core Type Definitions (OpenSim)
 // =============================================================================
 
 /**
- * Game archetype label — NOT a fixed enum.
- * New archetypes emerge dynamically as the library evolves through
- * experience accumulation. The initial library has zero archetypes;
- * labels like "platformer" or "grid_logic" are discovered, not assumed.
+ * Simulation archetype label. The five canonical archetypes are
+ * `ode_system`, `pde_grid`, `agent_based`, `monte_carlo`, and
+ * `cellular_automata` (mirrored from the upstream
+ * `simulation-type-classifier` tool). Treated as a string here so the
+ * library can also accept refined sub-archetype labels that emerge
+ * over time (e.g. "ode_system:stiff", "agent_based:flocking").
  */
-export type GameArchetype = string;
+export type SimulationArchetype = string;
 
 // -----------------------------------------------------------------------------
-// Physics Profile
+// Numeric Profile — replaces PhysicsProfile from the game-domain version
 // -----------------------------------------------------------------------------
 
-export interface PhysicsProfile {
-  hasGravity: boolean;
-  perspective: 'side' | 'top_down' | 'none';
-  movementType: 'continuous' | 'grid' | 'path' | 'ui_only';
+/**
+ * Coarse numerical fingerprint of a simulator. Captures the four
+ * dimensions the upstream `simulation-type-classifier` tool also
+ * uses, so library entries are directly comparable to fresh
+ * classifications coming off the prompt.
+ */
+export interface NumericProfile {
+  hasSpatialDomain: boolean;
+  timeEvolution: 'continuous' | 'discrete';
+  stochastic: boolean;
+  solverClass:
+    | 'time_integrator'
+    | 'pde_stencil'
+    | 'agent_step'
+    | 'sampler'
+    | 'cell_update';
 }
 
 // -----------------------------------------------------------------------------
@@ -25,7 +39,7 @@ export interface PhysicsProfile {
 // -----------------------------------------------------------------------------
 
 export interface FileEntry {
-  /** Relative path from project root, e.g. "src/scenes/Level1Scene.ts" */
+  /** Relative path from project root, e.g. "src/DampedPendulumODE.ts" */
   relativePath: string;
   content: string;
   extension: string;
@@ -35,7 +49,8 @@ export interface ProjectSnapshot {
   projectPath: string;
   files: FileEntry[];
   fileTree: string[];
-  gameConfig: Record<string, unknown> | null;
+  /** Parsed `simConfig.json` if present, else `null`. */
+  simConfig: Record<string, unknown> | null;
   /** Human-readable summary for LLM context */
   codeSummary: string;
 }
@@ -45,9 +60,9 @@ export interface ProjectSnapshot {
 // -----------------------------------------------------------------------------
 
 export interface ClassificationResult {
-  archetype: GameArchetype;
+  archetype: SimulationArchetype;
   reasoning: string;
-  physicsProfile: PhysicsProfile;
+  numericProfile: NumericProfile;
   confidence: number;
 }
 
@@ -89,22 +104,25 @@ export interface ImportEdge {
 }
 
 export interface DirectoryPattern {
-  /** e.g., ["behaviors", "characters", "scenes"] */
+  /** e.g., ["solvers", "validators", "lab"] */
   directories: string[];
-  /** e.g., { "behaviors": ["PatrolAI.ts", "ChaseAI.ts"], ... } */
+  /** e.g., { "solvers": ["BaseODE.ts", "RK4.ts"], ... } */
   filesByDirectory: Record<string, string[]>;
 }
 
 export interface ConfigField {
+  /** Dot path in simConfig.json, e.g. "pendulum.length" */
   path: string;
   value: unknown;
   type: string;
+  /** SI unit string if present (`m`, `kg`, `s`, `1/s`, `-`). */
+  unit?: string;
   description?: string;
 }
 
 export interface ExtractedPatterns {
-  archetype: GameArchetype;
-  physicsProfile: PhysicsProfile;
+  archetype: SimulationArchetype;
+  numericProfile: NumericProfile;
   projectPath: string;
   fileStructure: DirectoryPattern;
   classes: ClassDef[];
@@ -120,16 +138,23 @@ export interface ExtractedPatterns {
 // -----------------------------------------------------------------------------
 
 export interface TemplateFileDef {
-  /** Relative path in the family, e.g. "src/scenes/BaseLevelScene.ts" */
+  /** Relative path in the family, e.g. "src/solvers/BaseODE.ts" */
   relativePath: string;
-  /** Generalized content (game-specific names replaced with placeholders) */
+  /** Generalized content (project-specific names replaced with placeholders) */
   content: string;
-  /** Role: base_class, copy_template, system, behavior, utility */
-  role: 'base_class' | 'copy_template' | 'system' | 'behavior' | 'utility';
+  /** Role: base_class, copy_template, integrator, validator, lab_object, visualization, utility */
+  role:
+    | 'base_class'
+    | 'copy_template'
+    | 'integrator'
+    | 'validator'
+    | 'lab_object'
+    | 'visualization'
+    | 'utility';
 }
 
 export interface AbstractedTemplates {
-  archetype: GameArchetype;
+  archetype: SimulationArchetype;
   templateFiles: TemplateFileDef[];
   hooks: HookDef[];
   configSchema: ConfigField[];
@@ -143,8 +168,8 @@ export interface AbstractedTemplates {
 
 export interface TemplateFamily {
   id: string;
-  archetype: GameArchetype;
-  physicsProfile: PhysicsProfile;
+  archetype: SimulationArchetype;
+  numericProfile: NumericProfile;
   /** Which task number first discovered this family */
   discoveredAtTask: number;
   /** Paths of projects that contributed to this family */
@@ -167,7 +192,7 @@ export interface EvolutionEntry {
   taskId: string;
   timestamp: string;
   projectPath: string;
-  archetype: GameArchetype;
+  archetype: SimulationArchetype;
   action: 'created_family' | 'merged_to_family';
   familyId: string;
   patternsExtracted: number;

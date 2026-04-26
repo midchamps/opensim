@@ -6,7 +6,11 @@ import type {
   FailureStage,
 } from './types.js';
 import { getReactiveEntries } from './protocol-manager.js';
-import { type LLMConfig, getDiagnoserConfig, SIGNATURE_MATCH_THRESHOLD } from './config.js';
+import {
+  type LLMConfig,
+  getDiagnoserConfig,
+  SIGNATURE_MATCH_THRESHOLD,
+} from './config.js';
 
 // =============================================================================
 // Diagnoser — matches errors against protocol P, or uses LLM for novel errors
@@ -35,7 +39,14 @@ export interface DiagnosisResult {
   confidence: number;
 
   /** For novel errors: LLM-generated candidate entry */
-  candidateEntry?: Omit<DebugEntry, 'id' | 'occurrences' | 'contributingProjects' | 'createdAt' | 'lastMatchedAt'>;
+  candidateEntry?: Omit<
+    DebugEntry,
+    | 'id'
+    | 'occurrences'
+    | 'contributingProjects'
+    | 'createdAt'
+    | 'lastMatchedAt'
+  >;
 }
 
 /**
@@ -102,7 +113,10 @@ function matchAgainstProtocol(
 
   for (const entry of reactiveEntries) {
     const score = computeMatchScore(error, entry.signature);
-    if (score > SIGNATURE_MATCH_THRESHOLD && (!bestMatch || score > bestMatch.score)) {
+    if (
+      score > SIGNATURE_MATCH_THRESHOLD &&
+      (!bestMatch || score > bestMatch.score)
+    ) {
       bestMatch = { entry, score };
     }
   }
@@ -130,9 +144,7 @@ function computeMatchScore(
   // Error code match (highest weight)
   if (error.code === signature.errorCode) {
     score += 0.5;
-  } else if (
-    error.code.toLowerCase() === signature.errorCode.toLowerCase()
-  ) {
+  } else if (error.code.toLowerCase() === signature.errorCode.toLowerCase()) {
     score += 0.3;
   }
   weights += 0.5;
@@ -145,7 +157,11 @@ function computeMatchScore(
     }
   } catch {
     // Invalid regex — skip pattern matching
-    if (error.message.toLowerCase().includes(signature.messagePattern.toLowerCase())) {
+    if (
+      error.message
+        .toLowerCase()
+        .includes(signature.messagePattern.toLowerCase())
+    ) {
       score += 0.2;
     }
   }
@@ -174,7 +190,14 @@ function computeMatchScore(
 // -----------------------------------------------------------------------------
 
 interface LLMDiagnosisResult {
-  entry: Omit<DebugEntry, 'id' | 'occurrences' | 'contributingProjects' | 'createdAt' | 'lastMatchedAt'>;
+  entry: Omit<
+    DebugEntry,
+    | 'id'
+    | 'occurrences'
+    | 'contributingProjects'
+    | 'createdAt'
+    | 'lastMatchedAt'
+  >;
   confidence: number;
 }
 
@@ -214,19 +237,27 @@ function buildDiagnoserSystemPrompt(protocol: DebugProtocol): string {
     .map((e) => `${e.signature.errorCode}: ${e.rootCause.slice(0, 100)}`)
     .join('\n');
 
-  return `You are a game project debugger. You diagnose errors in Phaser + TypeScript web game projects.
+  return `You are an OpenSim simulator debugger. You diagnose errors in TypeScript + React Three Fiber simulator projects (numerical archetypes: ode_system, pde_grid, agent_based, monte_carlo, cellular_automata).
 
 Given an error, produce a structured diagnosis with:
 1. A normalized error signature (error code + message pattern with concrete names replaced by capture groups)
 2. The root cause explanation
 3. A verified fix
 
+Common OpenSim failure modes for context:
+- NaN propagating through solver state (dt too large, RHS returns Inf, stiff system)
+- vitest validator assertions failing (NaNDetector, checkUnitConsistency, checkConservation, compareToAnalytic)
+- TypeScript build errors from solver hook signature mismatch
+- vite dev-server / SSR issues from r3f / drei imports
+- Hand-rolled integrator outside the BaseODE / RK4 hierarchy
+- Dial onChange handlers updating React state but not simConfig.<field>.value
+
 Known error patterns in the protocol (for reference — do NOT duplicate these):
 ${existingCodes || '(none yet)'}
 
 Respond with ONLY a JSON object:
 {
-  "errorCode": "string (e.g. TS2339, TypeError, TextureNotFound)",
+  "errorCode": "string (e.g. TS2339, NAN_IN_STATE, CONSERVATION_DRIFT)",
   "messagePattern": "string (regex with capture groups for variable parts)",
   "stage": "build | test | runtime",
   "rootCause": "string (clear explanation)",
@@ -238,7 +269,10 @@ Respond with ONLY a JSON object:
 }`;
 }
 
-function buildDiagnoserUserPrompt(error: ParsedError, projectDir: string): string {
+function buildDiagnoserUserPrompt(
+  error: ParsedError,
+  projectDir: string,
+): string {
   return `Diagnose this error from project at ${projectDir}:
 
 Error Code: ${error.code}
@@ -256,14 +290,19 @@ function parseLLMDiagnosis(
   try {
     let jsonStr = content.trim();
     if (jsonStr.startsWith('```')) {
-      jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+      jsonStr = jsonStr
+        .replace(/```json?\n?/g, '')
+        .replace(/```/g, '')
+        .trim();
     }
 
     const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
 
-    const stage = (['build', 'test', 'runtime'].includes(parsed['stage'] as string)
-      ? parsed['stage']
-      : 'build') as FailureStage;
+    const stage = (
+      ['build', 'test', 'runtime'].includes(parsed['stage'] as string)
+        ? parsed['stage']
+        : 'build'
+    ) as FailureStage;
 
     return {
       entry: {

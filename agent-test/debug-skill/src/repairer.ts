@@ -102,7 +102,8 @@ async function applyEditFix(
     return {
       applied: false,
       repairType: 'known_fix',
-      description: 'Edit fix requires a file path, but none was provided in the error.',
+      description:
+        'Edit fix requires a file path, but none was provided in the error.',
       modifiedFiles: [],
       fix,
     };
@@ -152,7 +153,7 @@ async function applyConfigFix(
   _error: ParsedError,
   projectDir: string,
 ): Promise<RepairResult> {
-  const configPath = path.join(projectDir, 'src', 'gameConfig.json');
+  const configPath = path.join(projectDir, 'src', 'simConfig.json');
 
   try {
     const raw = await fs.readFile(configPath, 'utf-8');
@@ -357,13 +358,21 @@ async function callRepairLLM(
     messages: [
       {
         role: 'system',
-        content: `You are a repair agent for Phaser + TypeScript game projects.
+        content: `You are a repair agent for OpenSim simulator projects (TypeScript + React Three Fiber, BaseSolver subclass + simConfig.json + Phase-5 validators).
 Given an error and file content, produce a fix as JSON:
 {
   "search": "exact string to find in the file",
   "replace": "replacement string",
   "description": "what this fix does"
 }
+
+Common fix patterns:
+- NaN in solver state → smaller dt in simConfig.simulationTimeStep, or check rhs() for division-by-zero
+- Conservation drift → reduce dt or switch to RK45 / implicit integrator
+- Missing simConfig field → add the field as { "value": X, "type": "...", "unit": "...", "description": "..." }
+- Hand-rolled integrator → replace with "extends RK4" + override rhs(t, y)
+- Dial onChange not mutating simConfig → in the handler body, also assign simConfig.<field>.value = v before calling solver.reset()
+
 Output ONLY the JSON object.`,
       },
       {
@@ -398,7 +407,10 @@ function parseRepairResponse(content: string): DebugEntry['fix'] | null {
   try {
     let jsonStr = content.trim();
     if (jsonStr.startsWith('```')) {
-      jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+      jsonStr = jsonStr
+        .replace(/```json?\n?/g, '')
+        .replace(/```/g, '')
+        .trim();
     }
     const parsed = JSON.parse(jsonStr) as Record<string, string>;
     if (parsed['search'] && parsed['replace']) {

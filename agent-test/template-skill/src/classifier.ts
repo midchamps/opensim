@@ -1,20 +1,24 @@
 import type {
   ProjectSnapshot,
   ClassificationResult,
+  NumericProfile,
   TemplateLibrary,
   TemplateFamily,
 } from './types.js';
 import { getClassifierConfig, type LLMConfig } from './config.js';
 
 // =============================================================================
-// Classifier -- Library-aware, emergent archetype classification
+// Classifier — Library-aware, archetype-anchored simulator classification
 //
-// Key design principle: NO predefined archetype categories.
-// - When the library is empty, the LLM freely names the physics regime it
-//   observes in the code. This becomes the first family label.
-// - When the library already contains families, the LLM is shown their
-//   physics profiles and decides whether the new project matches an existing
-//   family or represents a genuinely new regime.
+// Key design principle: the FIVE canonical archetypes from the upstream
+// `simulation-type-classifier` tool (ode_system / pde_grid / agent_based /
+// monte_carlo / cellular_automata) are the default labels. The library is
+// allowed to discover refined sub-labels (e.g. "ode_system:stiff",
+// "agent_based:flocking") only when an existing family has clearly diverged.
+// - When the library is empty, the LLM names the archetype using the
+//   canonical five.
+// - When the library already has families, the LLM is shown each family's
+//   numeric profile and decides whether to reuse the family or split.
 // - The rule-based fallback also uses library state, matching against code
 //   signatures previously recorded in each family.
 // =============================================================================
@@ -24,6 +28,14 @@ interface ChatCompletionResponse {
   error?: { message: string };
 }
 
+const CANONICAL_ARCHETYPES = [
+  'ode_system',
+  'pde_grid',
+  'agent_based',
+  'monte_carlo',
+  'cellular_automata',
+] as const;
+
 // -----------------------------------------------------------------------------
 // Prompt construction
 // -----------------------------------------------------------------------------
@@ -32,60 +44,100 @@ function buildSystemPrompt(library: TemplateLibrary): string {
   const familySection =
     library.families.length > 0
       ? buildExistingFamiliesSection(library.families)
-      : `## Existing Families\nNone yet. You are naming the FIRST physics regime ever observed.\n`;
+      : `## Existing Families\nNone yet. Use one of the five canonical archetypes for the first family.\n`;
 
-  return `# Game Project Physics Classifier
+  return `# OpenSim Project Numerical-Scheme Classifier
 
-You analyze COMPLETED game project source code to determine its physics and
-interaction regime. You do NOT rely on genre names -- you observe the actual
-physics, perspective, and movement system in the code.
+You analyze COMPLETED simulator project source code to determine which
+NUMERICAL ARCHETYPE its solver belongs to. You do NOT rely on scientific
+domain (biology vs. physics vs. economics) — you observe the actual solver
+class hierarchy, state shape, and integration scheme in the code.
+
+## Five Canonical Archetypes
+
+1. **ode_system** — finite state vector y(t), evolution dy/dt = F(t, y),
+   solver class is a time integrator (RK4, RK45, Euler-Maruyama).
+   Evidence: \`extends RK4\`, \`extends BaseODE\`, \`rhs(t, y)\` method,
+   state is a number[] of size 2-10.
+
+2. **pde_grid** — fields u(x, y, t) on a regular grid, evolution by
+   spatial stencil (Laplacian, gradient). Solver class applies a
+   per-step finite-difference stencil.
+   Evidence: \`extends BasePDE\`, Float64Array fields, dx/dy/dt config,
+   stencil math in step().
+
+3. **agent_based** — list of autonomous agents with local rules and
+   neighbor queries. Solver class iterates per-agent updates with a
+   spatial-neighbor lookup.
+   Evidence: \`extends BaseAgent\`, agent record { position, velocity, ... },
+   updateAgent(self, neighbors, dt), neighborRadius.
+
+4. **monte_carlo** — statistical estimators built up by repeated
+   random sampling. Solver class accumulates samples and reports a
+   running mean/variance.
+   Evidence: \`extends BaseMC\`, sample accumulator, variance reduction,
+   step() draws an RNG sample.
+
+5. **cellular_automata** — grid of cells in a finite alphabet,
+   synchronous local update rule.
+   Evidence: \`extends BaseCA\`, cell grid (Uint8Array or 2D number[]),
+   neighbor masks, transition rule.
 
 ${familySection}
 ## Your Task
 
-1. Analyze the source code for three physical properties:
-   - **hasGravity**: Does the code apply Y-axis gravity? (setGravityY, jumpPower, fall logic)
-   - **perspective**: Is the camera side-view, top-down, or not applicable?
-   - **movementType**: Is movement continuous, grid-discrete, path-following, or UI-only?
+1. Determine the **NumericProfile** by reading the solver / state code:
+   - **hasSpatialDomain**: does the simulation live on a spatial domain
+     (true for pde_grid, agent_based, cellular_automata; false for
+     ode_system and monte_carlo).
+   - **timeEvolution**: 'continuous' for ODE/PDE, 'discrete' for the
+     other three.
+   - **stochastic**: true if RNG is core to the dynamics
+     (monte_carlo, sometimes agent_based, sometimes ode_system with
+     Euler-Maruyama).
+   - **solverClass**: 'time_integrator' / 'pde_stencil' / 'agent_step'
+     / 'sampler' / 'cell_update' (one-to-one with archetype).
 
 2. Decide classification:
 ${
   library.families.length > 0
-    ? `   - If the physics profile MATCHES an existing family, use that family's archetype name.
-   - If the physics profile is CLEARLY DIFFERENT from all existing families, invent a
-     short, descriptive snake_case label (e.g., "side_gravity", "free_top_down",
-     "discrete_grid", "path_wave", "ui_state_machine"). The label should describe the
-     PHYSICS, not the genre.`
-    : `   - Invent a short, descriptive snake_case label for the physics regime you observe
-     (e.g., "side_gravity", "free_top_down", "discrete_grid"). The label should
-     describe the PHYSICS and INTERACTION model, not a genre name.`
+    ? `   - If the numeric profile MATCHES an existing family, reuse its archetype.
+   - Only mint a refined sub-label (e.g. "ode_system:stiff",
+     "agent_based:flocking") if the new project clearly deserves a
+     separate family within the same canonical archetype.
+   - If the project doesn't fit any of the five canonical archetypes,
+     report archetype "unknown" with low confidence rather than
+     inventing one — that signals a Phase-7-skill out-of-scope project.`
+    : `   - Use one of the five canonical archetypes for the label.
+   - If the project doesn't fit any of the five, report archetype
+     "unknown" with low confidence.`
 }
 
 ## Output Format
 
 Respond with ONLY a JSON object:
 {
-  "archetype": "<snake_case label>",
-  "reasoning": "Brief explanation citing specific code evidence",
-  "physicsProfile": {
-    "hasGravity": true | false,
-    "perspective": "side" | "top_down" | "none",
-    "movementType": "continuous" | "grid" | "path" | "ui_only"
+  "archetype": "ode_system" | "pde_grid" | "agent_based" | "monte_carlo" | "cellular_automata" | "<refined sublabel>" | "unknown",
+  "reasoning": "Brief explanation citing specific code evidence (file path, class name, hook signature)",
+  "numericProfile": {
+    "hasSpatialDomain": true | false,
+    "timeEvolution": "continuous" | "discrete",
+    "stochastic": true | false,
+    "solverClass": "time_integrator" | "pde_stencil" | "agent_step" | "sampler" | "cell_update"
   },
-  "confidence": 0.0 to 1.0,
-  "isNewFamily": true | false
+  "confidence": 0.0 to 1.0
 }`;
 }
 
 function buildExistingFamiliesSection(families: TemplateFamily[]): string {
   const lines = ['## Existing Families in the Library\n'];
   for (const f of families) {
-    const pp = f.physicsProfile;
+    const np = f.numericProfile;
     lines.push(
       `### "${f.archetype}" (stability: ${(f.stability * 100).toFixed(0)}%, projects: ${f.contributingProjects.length})`,
     );
     lines.push(
-      `- gravity: ${pp.hasGravity}, perspective: ${pp.perspective}, movement: ${pp.movementType}`,
+      `- spatial: ${np.hasSpatialDomain}, time: ${np.timeEvolution}, stochastic: ${np.stochastic}, solver: ${np.solverClass}`,
     );
     lines.push(`- summary: ${f.summary}`);
     lines.push('');
@@ -94,14 +146,14 @@ function buildExistingFamiliesSection(families: TemplateFamily[]): string {
     'If the new project clearly fits one of these, reuse its archetype name.',
   );
   lines.push(
-    'Only create a new archetype if the physics regime is fundamentally different.\n',
+    'Only create a refined sub-label if the numeric profile deserves a split within the same canonical archetype.\n',
   );
   return lines.join('\n');
 }
 
 function buildUserPrompt(snapshot: ProjectSnapshot): string {
   const truncatedSummary = snapshot.codeSummary.slice(0, 12_000);
-  return `Classify this completed game project based on its source code.
+  return `Classify this completed simulator project based on its source code.
 
 ## File Tree
 ${snapshot.fileTree.join('\n')}
@@ -109,7 +161,7 @@ ${snapshot.fileTree.join('\n')}
 ## Code Analysis
 ${truncatedSummary}
 
-Analyze the PHYSICS, PERSPECTIVE, and MOVEMENT in the actual code. Output JSON only.`;
+Analyze the SOLVER CLASS HIERARCHY, STATE SHAPE, and INTEGRATION SCHEME in the actual code. Output JSON only.`;
 }
 
 // -----------------------------------------------------------------------------
@@ -164,6 +216,47 @@ async function callLLM(
 // Parse LLM response
 // -----------------------------------------------------------------------------
 
+function defaultProfileFor(arch: string): NumericProfile {
+  switch (arch) {
+    case 'pde_grid':
+      return {
+        hasSpatialDomain: true,
+        timeEvolution: 'continuous',
+        stochastic: false,
+        solverClass: 'pde_stencil',
+      };
+    case 'agent_based':
+      return {
+        hasSpatialDomain: true,
+        timeEvolution: 'discrete',
+        stochastic: true,
+        solverClass: 'agent_step',
+      };
+    case 'monte_carlo':
+      return {
+        hasSpatialDomain: false,
+        timeEvolution: 'discrete',
+        stochastic: true,
+        solverClass: 'sampler',
+      };
+    case 'cellular_automata':
+      return {
+        hasSpatialDomain: true,
+        timeEvolution: 'discrete',
+        stochastic: false,
+        solverClass: 'cell_update',
+      };
+    case 'ode_system':
+    default:
+      return {
+        hasSpatialDomain: false,
+        timeEvolution: 'continuous',
+        stochastic: false,
+        solverClass: 'time_integrator',
+      };
+  }
+}
+
 function parseClassification(raw: string): ClassificationResult {
   let jsonStr = raw.trim();
   if (jsonStr.startsWith('```')) {
@@ -175,189 +268,149 @@ function parseClassification(raw: string): ClassificationResult {
 
   try {
     const parsed = JSON.parse(jsonStr);
+    const archetype = (parsed.archetype as string) ?? 'unknown';
     return {
-      archetype: parsed.archetype ?? 'unknown',
+      archetype,
       reasoning: parsed.reasoning ?? '',
-      physicsProfile: parsed.physicsProfile ?? {
-        hasGravity: false,
-        perspective: 'none',
-        movementType: 'continuous',
-      },
+      numericProfile: parsed.numericProfile ?? defaultProfileFor(archetype),
       confidence: parsed.confidence ?? 0.5,
     };
   } catch {
-    return classifyByPhysicsHeuristics(raw, []);
+    return classifyByCodeHeuristics(raw, []);
   }
 }
 
 // -----------------------------------------------------------------------------
-// Rule-based fallback -- NO predefined categories
+// Rule-based fallback — anchored to the five canonical archetypes
 //
-// Instead of hardcoded archetype names, we detect physics SIGNALS and build
-// a profile, then match against existing families or mint a new label.
+// Each archetype gets a list of code-pattern fingerprints. We score the
+// snapshot against each archetype's patterns and pick the highest-scoring.
 // -----------------------------------------------------------------------------
 
-interface PhysicsSignal {
-  name: string;
+interface ArchetypeFingerprint {
+  archetype: (typeof CANONICAL_ARCHETYPES)[number];
   patterns: RegExp[];
-  profileHint: {
-    hasGravity: boolean;
-    perspective: string;
-    movementType: string;
-  };
+  profile: NumericProfile;
 }
 
-const PHYSICS_SIGNALS: PhysicsSignal[] = [
+const ARCHETYPE_FINGERPRINTS: ArchetypeFingerprint[] = [
   {
-    name: 'gravity',
+    archetype: 'ode_system',
     patterns: [
-      /setGravityY/i,
-      /jumpPower/i,
-      /PlatformerMovement/i,
-      /coyoteTime/i,
-      /gravity\s*[:=]\s*\{?\s*y\s*:/i,
+      /extends\s+RK4\b/,
+      /extends\s+BaseODE\b/,
+      /\brhs\s*\(/,
+      /BaseSolver<\s*ODEState\s*>/,
+      /\bRK45\b/,
     ],
-    profileHint: {
-      hasGravity: true,
-      perspective: 'side',
-      movementType: 'continuous',
-    },
+    profile: defaultProfileFor('ode_system'),
   },
   {
-    name: 'free_movement',
+    archetype: 'pde_grid',
     patterns: [
-      /EightWayMovement/i,
-      /DashAbility/i,
-      /ySortGroup/i,
-      /FaceTarget/i,
+      /extends\s+BasePDE\b/,
+      /Laplacian5\b/,
+      /\bdx\b.*\bdy\b/,
+      /Float64Array\(\s*\w+\s*\*\s*\w+\s*\)/,
+      /\bstencil\b/i,
     ],
-    profileHint: {
-      hasGravity: false,
-      perspective: 'top_down',
-      movementType: 'continuous',
-    },
+    profile: defaultProfileFor('pde_grid'),
   },
   {
-    name: 'grid_discrete',
+    archetype: 'agent_based',
     patterns: [
-      /BoardManager/i,
-      /cellSize/i,
-      /gridCols/i,
-      /BaseGridScene/i,
-      /worldToGrid/i,
+      /extends\s+BaseAgent\b/,
+      /updateAgent\s*\(/,
+      /\bneighborRadius\b/,
+      /findNeighbors\s*\(/,
+      /\b(?:position|velocity)\s*:\s*\[/,
     ],
-    profileHint: {
-      hasGravity: false,
-      perspective: 'top_down',
-      movementType: 'grid',
-    },
+    profile: defaultProfileFor('agent_based'),
   },
   {
-    name: 'path_wave',
+    archetype: 'monte_carlo',
     patterns: [
-      /WaveManager/i,
-      /EconomyManager/i,
-      /BaseTDScene/i,
-      /BaseTower/i,
-      /waypoints/i,
+      /extends\s+BaseMC\b/,
+      /\bsamples?Mean\b/i,
+      /\bvarianceReduction\b/i,
+      /Math\.random\(\)\s*[<>]/,
+      /\b(?:antithetic|importance)Sampling\b/i,
     ],
-    profileHint: {
-      hasGravity: false,
-      perspective: 'top_down',
-      movementType: 'path',
-    },
+    profile: defaultProfileFor('monte_carlo'),
   },
   {
-    name: 'ui_state',
+    archetype: 'cellular_automata',
     patterns: [
-      /DialogueManager/i,
-      /CardManager/i,
-      /QuizManager/i,
-      /BaseBattleScene/i,
-      /ComboManager/i,
+      /extends\s+BaseCA\b/,
+      /Uint8Array\(\s*\w+\s*\*\s*\w+\s*\)/,
+      /\btransitionRule\b/i,
+      /\bneighborMask\b/i,
+      /\bcellGrid\b/i,
     ],
-    profileHint: {
-      hasGravity: false,
-      perspective: 'none',
-      movementType: 'ui_only',
-    },
+    profile: defaultProfileFor('cellular_automata'),
   },
 ];
 
 /**
- * Detect physics signals in code and produce a profile + tentative label.
- * Then try to match against existing families.
+ * Detect archetype-specific code fingerprints. Then try to match
+ * against existing families before falling back to the canonical
+ * archetype label.
  */
-export function classifyByPhysicsHeuristics(
+export function classifyByCodeHeuristics(
   code: string,
   existingFamilies: TemplateFamily[],
 ): ClassificationResult {
-  // Score each signal group
-  const signalScores: Array<{ signal: PhysicsSignal; score: number }> = [];
-  for (const signal of PHYSICS_SIGNALS) {
+  const scores: Array<{ fp: ArchetypeFingerprint; score: number }> = [];
+  for (const fp of ARCHETYPE_FINGERPRINTS) {
     let score = 0;
-    for (const pat of signal.patterns) {
+    for (const pat of fp.patterns) {
       if (pat.test(code)) score += 1;
     }
-    signalScores.push({ signal, score });
+    scores.push({ fp, score });
   }
 
-  signalScores.sort((a, b) => b.score - a.score);
-  const best = signalScores[0]!;
-  const totalMatches = signalScores.reduce((s, v) => s + v.score, 0);
+  scores.sort((a, b) => b.score - a.score);
+  const best = scores[0]!;
+  const totalMatches = scores.reduce((s, v) => s + v.score, 0);
 
   if (totalMatches === 0) {
     return {
       archetype: 'unknown',
-      reasoning: 'No recognizable physics signals found in code',
-      physicsProfile: {
-        hasGravity: false,
-        perspective: 'none',
-        movementType: 'continuous',
-      },
+      reasoning:
+        'No canonical-archetype code fingerprint matched. Either the project is out of OpenSim scope or the solver names have been renamed.',
+      numericProfile: defaultProfileFor('ode_system'),
       confidence: 0.1,
     };
   }
 
-  const detectedProfile = {
-    hasGravity: best.signal.profileHint.hasGravity,
-    perspective: best.signal.profileHint.perspective as
-      | 'side'
-      | 'top_down'
-      | 'none',
-    movementType: best.signal.profileHint.movementType as
-      | 'continuous'
-      | 'grid'
-      | 'path'
-      | 'ui_only',
-  };
+  const detectedProfile = best.fp.profile;
 
-  // Try to match against an existing family by physics profile
+  // Try to match an existing family on numeric profile
   for (const family of existingFamilies) {
-    const fp = family.physicsProfile;
+    const fp = family.numericProfile;
     if (
-      fp.hasGravity === detectedProfile.hasGravity &&
-      fp.perspective === detectedProfile.perspective &&
-      fp.movementType === detectedProfile.movementType
+      fp.hasSpatialDomain === detectedProfile.hasSpatialDomain &&
+      fp.timeEvolution === detectedProfile.timeEvolution &&
+      fp.stochastic === detectedProfile.stochastic &&
+      fp.solverClass === detectedProfile.solverClass
     ) {
       return {
         archetype: family.archetype,
         reasoning:
           `Heuristic match to existing family "${family.archetype}" ` +
-          `(signal: ${best.signal.name}, score: ${best.score}/${totalMatches})`,
-        physicsProfile: detectedProfile,
+          `(canonical archetype: ${best.fp.archetype}, fingerprints: ${best.score}/${totalMatches})`,
+        numericProfile: detectedProfile,
         confidence: totalMatches > 0 ? best.score / totalMatches : 0.2,
       };
     }
   }
 
-  // No existing family matches -- mint a new label from the signal name
   return {
-    archetype: best.signal.name,
+    archetype: best.fp.archetype,
     reasoning:
-      `New regime detected via heuristic signal "${best.signal.name}" ` +
+      `Canonical archetype "${best.fp.archetype}" detected by code fingerprints ` +
       `(score: ${best.score}/${totalMatches})`,
-    physicsProfile: detectedProfile,
+    numericProfile: detectedProfile,
     confidence: totalMatches > 0 ? best.score / totalMatches : 0.2,
   };
 }
@@ -367,13 +420,14 @@ export function classifyByPhysicsHeuristics(
 // -----------------------------------------------------------------------------
 
 /**
- * Classify a completed project's archetype.
+ * Classify a completed simulator project's archetype.
  *
  * The classifier is LIBRARY-AWARE:
  * - It receives the current library state so it can compare against
- *   existing families before creating a new archetype.
- * - When the library is empty, it freely names the first physics regime.
- * - Tries LLM first; falls back to physics-heuristic rules.
+ *   existing families before creating a new (sub-)archetype label.
+ * - When the library is empty, it labels the project using one of
+ *   the five canonical archetypes.
+ * - Tries LLM first; falls back to code-fingerprint heuristics.
  */
 export async function classifyProject(
   snapshot: ProjectSnapshot,
@@ -382,11 +436,10 @@ export async function classifyProject(
   const config = getClassifierConfig();
 
   const allCode = snapshot.files
-    .filter((f) => f.extension === '.ts')
+    .filter((f) => f.extension === '.ts' || f.extension === '.tsx')
     .map((f) => f.content)
     .join('\n');
 
-  // Try LLM classification (library-aware prompt)
   if (config.apiKey) {
     try {
       console.log(
@@ -410,8 +463,7 @@ export async function classifyProject(
     );
   }
 
-  // Fallback: physics-heuristic classification (also library-aware)
-  const result = classifyByPhysicsHeuristics(allCode, library.families);
+  const result = classifyByCodeHeuristics(allCode, library.families);
   console.log(
     `[Classifier] Heuristic result: "${result.archetype}" (confidence: ${result.confidence})`,
   );

@@ -107,7 +107,7 @@ async function saveFamilyFiles(family: TemplateFamily): Promise<void> {
   const metadata = {
     id: family.id,
     archetype: family.archetype,
-    physicsProfile: family.physicsProfile,
+    numericProfile: family.numericProfile,
     discoveredAtTask: family.discoveredAtTask,
     contributingProjects: family.contributingProjects,
     stability: family.stability,

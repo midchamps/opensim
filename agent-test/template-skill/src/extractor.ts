@@ -1,6 +1,5 @@
 import * as fs from 'fs/promises';
-import * as path from 'path';
-import { M0_GAME_CONFIG_PATH } from './config.js';
+import { M0_SIM_CONFIG_PATH } from './config.js';
 import type {
   ProjectSnapshot,
   ClassificationResult,
@@ -23,14 +22,15 @@ import type {
 
 function extractDirectoryPattern(snapshot: ProjectSnapshot): DirectoryPattern {
   const srcFiles = snapshot.files.filter(
-    (f) => f.relativePath.startsWith('src/') && f.extension === '.ts',
+    (f) =>
+      f.relativePath.startsWith('src/') &&
+      (f.extension === '.ts' || f.extension === '.tsx'),
   );
 
   const dirMap: Record<string, string[]> = {};
 
   for (const file of srcFiles) {
     const parts = file.relativePath.split('/');
-    // We care about src/{subdir}/filename
     if (parts.length >= 3) {
       const subdir = parts[1]!;
       const filename = parts[parts.length - 1]!;
@@ -50,7 +50,7 @@ function extractDirectoryPattern(snapshot: ProjectSnapshot): DirectoryPattern {
 // -----------------------------------------------------------------------------
 
 const CLASS_REGEX =
-  /^(?:export\s+)?(?:(abstract)\s+)?class\s+(\w+)(?:\s+extends\s+([\w.]+))?/gm;
+  /^(?:export\s+)?(?:(abstract)\s+)?class\s+(\w+)(?:\s*<[^>]*>)?(?:\s+extends\s+([\w.]+(?:<[^>]+>)?))?/gm;
 
 const METHOD_REGEX =
   /^\s*(public|protected|private)?\s*(abstract\s+)?(override\s+)?(?:async\s+)?(\w+)\s*\(([^)]*)\)\s*(?::\s*[\w<>[\]| ,]+)?\s*[{;]/gm;
@@ -59,7 +59,7 @@ function extractClasses(snapshot: ProjectSnapshot): ClassDef[] {
   const classes: ClassDef[] = [];
 
   for (const file of snapshot.files) {
-    if (file.extension !== '.ts') continue;
+    if (file.extension !== '.ts' && file.extension !== '.tsx') continue;
 
     const content = file.content;
     let classMatch: RegExpExecArray | null;
@@ -97,7 +97,6 @@ function extractMethods(fileContent: string, _className: string): MethodDef[] {
     const name = match[4]!;
     const params = match[5] ?? '';
 
-    // Skip constructor and Phaser lifecycle (we track hooks instead)
     if (name === 'constructor') continue;
 
     methods.push({
@@ -116,20 +115,41 @@ function extractMethods(fileContent: string, _className: string): MethodDef[] {
 // 3. Hook extraction
 // -----------------------------------------------------------------------------
 
+/**
+ * OpenSim solver hooks: anything declared `abstract` on a BaseSolver
+ * descendant (initialState, step, rhs, updateAgent, ...), plus
+ * lifecycle helpers (afterReset, notify) and convention-prefixed
+ * methods.
+ */
 function extractHooks(classes: ClassDef[]): HookDef[] {
   const hookMap = new Map<string, HookDef>();
 
+  // Pre-defined names that are *the* solver hooks. Treat them as
+  // hooks even when they aren't abstract (a leaf simulator is going
+  // to override them concretely).
+  const KNOWN_HOOK_NAMES = new Set([
+    'initialState',
+    'step',
+    'rhs',
+    'updateAgent',
+    'transitionRule',
+    'cellUpdate',
+    'sample',
+    'afterReset',
+    'notify',
+  ]);
+
   for (const cls of classes) {
     for (const method of cls.methods) {
-      // Hooks are: abstract methods in base classes, or protected methods starting with "on"
       const isHook =
         method.isAbstract ||
+        KNOWN_HOOK_NAMES.has(method.name) ||
         (method.visibility === 'protected' &&
           (method.name.startsWith('on') ||
-            method.name.startsWith('setup') ||
-            method.name.startsWith('create') ||
-            method.name.startsWith('get') ||
-            method.name.startsWith('check')));
+            method.name.startsWith('compute') ||
+            method.name.startsWith('update') ||
+            method.name.startsWith('check') ||
+            method.name.startsWith('apply')));
 
       if (!isHook) continue;
 
@@ -163,7 +183,7 @@ function extractImports(snapshot: ProjectSnapshot): ImportEdge[] {
   const edges: ImportEdge[] = [];
 
   for (const file of snapshot.files) {
-    if (file.extension !== '.ts') continue;
+    if (file.extension !== '.ts' && file.extension !== '.tsx') continue;
 
     let match: RegExpExecArray | null;
     IMPORT_REGEX.lastIndex = 0;
@@ -175,7 +195,6 @@ function extractImports(snapshot: ProjectSnapshot): ImportEdge[] {
       const defaultImport = match[2];
       const fromPath = match[3]!;
 
-      // Only track local imports (starting with ./ or ../)
       if (!fromPath.startsWith('.')) continue;
 
       const importedNames = defaultImport
@@ -194,18 +213,24 @@ function extractImports(snapshot: ProjectSnapshot): ImportEdge[] {
 }
 
 // -----------------------------------------------------------------------------
-// 5. Config extension extraction (diff against M0)
+// 5. simConfig extension extraction (diff against M0)
 // -----------------------------------------------------------------------------
 
-async function extractConfigExtensions(
-  gameConfig: Record<string, unknown> | null,
-): Promise<ConfigField[]> {
-  if (!gameConfig) return [];
+interface ConfigWrapper {
+  value?: unknown;
+  type?: string;
+  unit?: string;
+  description?: string;
+}
 
-  // Load M0's baseline config
+async function extractConfigExtensions(
+  simConfig: Record<string, unknown> | null,
+): Promise<ConfigField[]> {
+  if (!simConfig) return [];
+
   let m0Config: Record<string, unknown> = {};
   try {
-    const raw = await fs.readFile(M0_GAME_CONFIG_PATH, 'utf-8');
+    const raw = await fs.readFile(M0_SIM_CONFIG_PATH, 'utf-8');
     m0Config = JSON.parse(raw) as Record<string, unknown>;
   } catch {
     // If M0 config not found, treat everything as an extension
@@ -214,26 +239,49 @@ async function extractConfigExtensions(
   const m0Keys = new Set(Object.keys(m0Config));
   const extensions: ConfigField[] = [];
 
-  for (const [key, value] of Object.entries(gameConfig)) {
-    if (m0Keys.has(key)) continue; // Skip M0 baseline fields
+  // simConfig has two shapes:
+  //   (a) FLAT leaves: { fieldName: { value, type, unit, description } }
+  //   (b) NAMESPACED:  { ns: { fieldName: { value, type, unit, description } } }
+  // We walk both, skipping any path that already exists in M0.
+  for (const [key, value] of Object.entries(simConfig)) {
+    if (m0Keys.has(key) && isLeaf(m0Config[key]) && isLeaf(value)) continue;
 
-    if (value && typeof value === 'object') {
-      // Recurse one level into config sections
+    if (isLeaf(value)) {
+      const wrapper = value as ConfigWrapper;
+      extensions.push({
+        path: key,
+        value: wrapper.value,
+        type: typeof wrapper.value,
+        unit: wrapper.unit,
+        description: wrapper.description,
+      });
+    } else if (value && typeof value === 'object') {
       for (const [subKey, subVal] of Object.entries(
         value as Record<string, unknown>,
       )) {
-        const wrapper = subVal as Record<string, unknown> | null;
+        if (!isLeaf(subVal)) continue;
+        const wrapper = subVal as ConfigWrapper;
         extensions.push({
           path: `${key}.${subKey}`,
-          value: wrapper?.value ?? subVal,
-          type: typeof (wrapper?.value ?? subVal),
-          description: (wrapper?.description as string) ?? undefined,
+          value: wrapper.value,
+          type: typeof wrapper.value,
+          unit: wrapper.unit,
+          description: wrapper.description,
         });
       }
     }
   }
 
   return extensions;
+}
+
+function isLeaf(v: unknown): boolean {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    !Array.isArray(v) &&
+    'value' in (v as Record<string, unknown>)
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -245,11 +293,12 @@ function collectCodeSnippets(
 ): Record<string, string> {
   const snippets: Record<string, string> = {};
   const keyPatterns = [
-    /Base\w+Scene\.ts$/,
     /Base\w+\.ts$/,
     /_Template\w+\.ts$/,
-    /gameConfig\.json$/,
-    /utils\.ts$/,
+    /simConfig\.json$/,
+    /\bobservables\.ts$/,
+    /validators\/\w+\.ts$/,
+    /test\/validation\.test\.ts$/,
   ];
 
   for (const file of snapshot.files) {
@@ -266,7 +315,7 @@ function collectCodeSnippets(
 // -----------------------------------------------------------------------------
 
 /**
- * Extract reusable code patterns from a completed game project.
+ * Extract reusable code patterns from a completed simulator project.
  * Entirely rule-based — no LLM calls.
  */
 export async function extractPatterns(
@@ -285,20 +334,20 @@ export async function extractPatterns(
   console.log('[Extractor] Extracting import graph...');
   const imports = extractImports(snapshot);
 
-  console.log('[Extractor] Extracting config extensions...');
-  const configExtensions = await extractConfigExtensions(snapshot.gameConfig);
+  console.log('[Extractor] Extracting simConfig extensions...');
+  const configExtensions = await extractConfigExtensions(snapshot.simConfig);
 
   console.log('[Extractor] Collecting code snippets...');
   const codeSnippets = collectCodeSnippets(snapshot);
 
   console.log(
     `[Extractor] Done: ${classes.length} classes, ${hooks.length} hooks, ` +
-      `${configExtensions.length} config fields, ${imports.length} imports`,
+      `${configExtensions.length} simConfig fields, ${imports.length} imports`,
   );
 
   return {
     archetype: classification.archetype,
-    physicsProfile: classification.physicsProfile,
+    numericProfile: classification.numericProfile,
     projectPath: snapshot.projectPath,
     fileStructure,
     classes,

@@ -1,85 +1,73 @@
 {
-  "name": "Meta Template M0",
-  "version": "1.0.0",
-  "description": "A minimal, game-agnostic project skeleton that defines the universal structure required for a playable Phaser game. Does not assume any genre, physics regime, or gameplay mechanic.",
+  "name": "OpenSim Meta Template M0",
+  "version": "2.0.0",
+  "description": "A minimal, archetype-agnostic project skeleton that defines the universal structure required for an OpenSim simulator. Does not assume any numerical archetype, solver class, or visualization shape.",
   "core": {
-    "description": "Universal project foundation from templates/core/",
+    "description": "Universal project foundation copied from agent-test/templates/core/",
     "provides": [
       "Build toolchain (Vite + TypeScript + Tailwind)",
-      "Phaser initialization (main.ts + gameConfig.json)",
-      "Scene flow (Preloader → TitleScreen → Levels → UI overlays)",
-      "Level management (LevelManager.ts)",
-      "Generic FSM (StateMachine.ts)",
-      "Shared utilities (initScale, safeAddSound, addCollider, addOverlap, initUIDom)"
+      "React 18 + Three.js + @react-three/fiber + @react-three/drei runtime",
+      "Universal solver lifecycle (BaseSolver — play / pause / reset / subscribe + RAF accumulator)",
+      "simConfig.json — wrapper-format `{ value, type, unit, description }` configuration",
+      "Lab catalogue: `<BaseLabScene>`, instruments (`<Dial>`, `<Button3D>`, `<DigitalReadout>`, `<ChartMonitor>`), interaction helpers (`<HoverInfo>`)",
+      "Phase-5 numerical validators — NaNDetector, checkUnitConsistency, checkConservation, compareToAnalytic + detectPeriodFromZeroCrossings",
+      "Vitest with jsdom environment + coverage hooks"
     ],
-    "scenes": [
-      "Preloader",
-      "TitleScreen",
-      "UIScene",
-      "PauseUIScene",
-      "VictoryUIScene",
-      "GameOverUIScene",
-      "GameCompleteUIScene"
+    "files": [
+      "src/main.tsx",
+      "src/App.tsx",
+      "src/simConfig.json",
+      "src/solvers/BaseSolver.ts",
+      "src/solvers/index.ts",
+      "src/lab/scenes/BaseLabScene.tsx",
+      "src/lab/instruments/{Dial,Button3D,DigitalReadout,ChartMonitor}.tsx",
+      "src/lab/interactions/HoverInfo.tsx",
+      "src/lab/{lab_objects,visualization}/index.ts (empty barrels — overridden by archetype overlays)",
+      "src/validators/{NaNDetector,UnitConsistency,ConservationLaw,AnalyticBenchmark}.ts"
     ]
   },
   "extension": {
-    "description": "Minimal extension interfaces for game-type specialization",
+    "description": "Minimal extension interface for archetype specialization",
     "files": {
-      "BaseGameScene.ts": {
-        "type": "base_class",
-        "purpose": "Scene lifecycle skeleton with Template Method pattern",
-        "abstractMethods": ["setupWorld", "createEntities"],
-        "hooks": ["onPreCreate", "onPostCreate", "onPreUpdate", "onPostUpdate"],
-        "utilities": ["onLevelComplete", "onGameOver"]
-      },
-      "BaseEntity.ts": {
-        "type": "base_class",
-        "purpose": "Minimal entity base with lifecycle hooks",
-        "hooks": ["onUpdate", "onDamageTaken", "onDeath"]
-      },
-      "_TemplateScene.ts": {
+      "_TemplateSolver.ts": {
         "type": "copy_template",
-        "purpose": "COPY to create new game scenes"
-      },
-      "_TemplateEntity.ts": {
-        "type": "copy_template",
-        "purpose": "COPY to create new entity types"
+        "purpose": "COPY when starting from M0 with no archetype overlay yet. After classification the agent overlays the archetype's richer scaffold (_TemplateODE.ts, _TemplateAgent.ts, ...).",
+        "abstractMethods": ["initialState", "step"]
       }
     }
   },
   "doesNotAssume": [
-    "Physics regime (gravity, grid, path, none)",
-    "Perspective (side view, top-down, isometric)",
-    "Entity types (player, enemy, tower, card)",
-    "Behavior systems (patrol, chase, movement)",
-    "Domain systems (BoardManager, WaveManager, DialogueManager)",
-    "Input scheme (keyboard, mouse, touch)"
+    "Numerical archetype (ode_system, pde_grid, agent_based, monte_carlo, cellular_automata)",
+    "Solver class (RK4, RK45, finite-difference stencil, agent step, sampler, cell update)",
+    "State shape (vector / field / agent list / cell grid / sample accumulator)",
+    "Whether the system is deterministic or stochastic",
+    "Whether the system has a spatial domain"
   ],
   "extensionPoints": [
     {
-      "name": "setupWorld",
-      "description": "World construction — tilemap, grid, arena, UI panels",
-      "location": "BaseGameScene.ts"
+      "name": "initialState",
+      "description": "Return the state at t = 0. Shape is archetype-specific: number[] for ODE, Record<string, Float64Array> for PDE field, Agent[] for agent_based, etc.",
+      "location": "extension/_TemplateSolver.ts (BaseSolver subclass)"
     },
     {
-      "name": "createEntities",
-      "description": "Entity creation — player, enemies, NPCs, towers, cards",
-      "location": "BaseGameScene.ts"
+      "name": "step",
+      "description": "Advance state by one fixed `dt`. Implemented by archetype-specific concrete integrators (RK4, Laplacian5, etc.) — the meta template just declares the override surface.",
+      "location": "extension/_TemplateSolver.ts (BaseSolver subclass)"
     },
     {
-      "name": "gameConfig.json",
-      "description": "Game-specific config fields added via { value: X } wrapper format",
-      "location": "core/src/gameConfig.json"
+      "name": "simConfig.json",
+      "description": "Simulation-specific config fields added via `{ value, type, unit, description }` wrapper. Read in code via `simConfig.<field>.value`.",
+      "location": "core/src/simConfig.json"
     },
     {
-      "name": "LevelManager.LEVEL_ORDER",
-      "description": "Level scene keys for progression",
-      "location": "core/src/LevelManager.ts"
+      "name": "App.tsx",
+      "description": "Lab scene composition. Mount `<BaseLabScene>` and add archetype-specific lab_objects + visualization + instruments bound to simConfig fields.",
+      "location": "core/src/App.tsx"
     },
     {
-      "name": "main.ts scene registration",
-      "description": "Import and register game scenes",
-      "location": "core/src/main.ts"
+      "name": "validators/",
+      "description": "Phase-6 test file (`src/test/validation.test.ts`) imports the four validator helpers and asserts NaN propagation, unit consistency, conservation drift, and analytic baseline targets.",
+      "location": "core/src/validators/ + core/src/test/validation.test.ts"
     }
   ]
 }

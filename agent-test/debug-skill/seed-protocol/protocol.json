@@ -1,7 +1,7 @@
 {
   "version": 0,
-  "createdAt": "2026-04-19T00:00:00.000Z",
-  "updatedAt": "2026-04-19T00:00:00.000Z",
+  "createdAt": "2026-04-26T00:00:00.000Z",
+  "updatedAt": "2026-04-26T00:00:00.000Z",
   "seedProtocolPath": "seed-protocol",
   "entries": [
     {
@@ -13,17 +13,17 @@
         "messagePattern": "Cannot find module '(.+)'",
         "fileContext": "src/**/*.ts"
       },
-      "rootCause": "Import path is incorrect — wrong number of ../ levels or file moved to a different directory.",
-      "tags": ["import", "path"],
+      "rootCause": "Import path resolves wrong. Common cause in OpenSim: confusing source-repo paths (`../../core/src/solvers/BaseSolver`) with deploy-time paths (`./BaseSolver`). After the Phase-1 cp, archetype solver files end up in the same directory as BaseSolver.",
+      "tags": ["import", "path", "deploy-time"],
       "fix": {
         "type": "edit",
-        "description": "Count ../ levels from the importing file to the target file and correct the relative path.",
-        "patch": "Verify file exists at the resolved path; adjust ../ depth to match actual directory structure."
+        "description": "Replace the source-repo path with the deploy-time relative path. For solver files imported from a sibling: `from './BaseSolver'`. For simConfig: `from '../simConfig.json'`.",
+        "patch": "Resolve the import relative to the file's POST-CP location (under `src/solvers/...`), not relative to the template source repo."
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-reactive-002",
@@ -34,104 +34,146 @@
         "messagePattern": "Property '(.+)' does not exist on type '(.+)'",
         "fileContext": "src/**/*.ts"
       },
-      "rootCause": "Accessing a property or method not defined on the class/interface. Often caused by typo in property name or missing declaration in base class.",
-      "tags": ["typescript", "property", "type-mismatch"],
+      "rootCause": "Accessing a property not defined on the class/interface. Most often in OpenSim: invented hook names that aren't in `template_api.md` (e.g. `solver.tick()` when the API only ships `step()`), or a simConfig field accessed via `simConfig.foo.value` that wasn't added to simConfig.json.",
+      "tags": ["typescript", "property", "hook-integrity"],
       "fix": {
         "type": "edit",
-        "description": "Check the class definition for the correct property name. Add the property if missing, or fix the typo.",
-        "patch": "Open the type/class definition, verify available properties, and correct the access or add the missing declaration."
+        "description": "Cross-reference the archetype's `template_api.md` for the actual hook/method name. For simConfig fields, add the field to `src/simConfig.json` in the wrapper format.",
+        "patch": "Use only hook names that appear in `docs/modules/<archetype>/template_api.md`. Inventing one will fail typecheck."
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-reactive-003",
       "kind": "reactive",
       "signature": {
-        "stage": "runtime",
-        "errorCode": "TypeError",
-        "messagePattern": "Cannot read propert(y|ies) of undefined",
+        "stage": "build",
+        "errorCode": "TS1484",
+        "messagePattern": "'(.+)' is a type and must be imported using a type-only import",
         "fileContext": "src/**/*.ts"
       },
-      "rootCause": "Object accessed before initialization. Common in Phaser create() where an object is used before being constructed.",
-      "tags": ["runtime", "initialization-order", "undefined"],
+      "rootCause": "TypeScript's `verbatimModuleSyntax` requires `import { type X }` for interfaces. Mixing values and types in the same braces fails to build.",
+      "tags": ["typescript", "type-import"],
       "fix": {
         "type": "edit",
-        "description": "Reorder creation statements so that the object is initialized before it is accessed.",
-        "patch": "Move the construction/assignment statement above the first usage in create() or the relevant lifecycle method."
+        "description": "Move type imports to a separate `import type { ... }` line, or prefix individual entries with `type` inside the braces.",
+        "patch": "import { BaseODE, type ODEState } from './solvers';   // CORRECT (mixed)\nimport { BaseODE, ODEState } from './solvers';        // WRONG (build error)"
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-reactive-004",
       "kind": "reactive",
       "signature": {
-        "stage": "runtime",
-        "errorCode": "TextureNotFound",
-        "messagePattern": "Texture '(.+)' not found",
-        "fileContext": "src/**/*.ts"
+        "stage": "test",
+        "errorCode": "NAN_IN_STATE",
+        "messagePattern": "NaNDetector: (.+) is non-finite",
+        "fileContext": "src/test/validation.test.ts"
       },
-      "rootCause": "Texture key used in code does not match the key registered in asset-pack.json. Often a spelling difference or missing frame number suffix.",
-      "tags": ["asset", "texture", "key-mismatch"],
+      "rootCause": "The solver's state vector contains a NaN/Inf during the simulation. Top causes: (1) `dt` too large for the system's natural frequency or stiffness, (2) `rhs()` returns NaN from a hidden division-by-zero or 0**0, (3) stiff system that needs an implicit / adaptive integrator instead of fixed-step RK4.",
+      "tags": ["runtime", "nan", "integrator", "stiffness"],
       "fix": {
-        "type": "edit",
-        "description": "Compare the texture key in code with asset-pack.json and use the exact key from the asset registry.",
-        "patch": "Open asset-pack.json, find the correct key, and replace the mismatched key in the source file."
+        "type": "config",
+        "description": "Reduce `simulationTimeStep.value` (try halving until NaN disappears). If problem persists, audit `rhs()` for division by a state component that can hit zero. For genuinely stiff systems, switch to RK45 (adaptive) — note Phase-4 only ships fixed-step RK4.",
+        "patch": "Halve `simConfig.simulationTimeStep.value`; if still NaN, scan `rhs()` body for `/`, `Math.pow(_, _)`, `Math.log(_)` calls on state components."
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-reactive-005",
       "kind": "reactive",
       "signature": {
-        "stage": "runtime",
-        "errorCode": "AnimationNotFound",
-        "messagePattern": "Animation '(.+)' (doesn't exist|not found)",
-        "fileContext": "src/**/*.ts"
+        "stage": "test",
+        "errorCode": "CONSERVATION_DRIFT",
+        "messagePattern": "checkConservation.*drift\\s*\\(([\\d.]+)\\) > tolerance",
+        "fileContext": "src/test/validation.test.ts"
       },
-      "rootCause": "Animation key referenced in code does not exist in animations.json. Key may have been renamed or never created.",
-      "tags": ["asset", "animation", "key-mismatch"],
+      "rootCause": "A conserved scalar (typically energy with damping = 0) drifts beyond the declared tolerance. Three common causes: (a) wrong integrator choice (Euler instead of RK4), (b) `dt` too large to resolve the natural period (rule: dt should resolve the smallest period in ≥ 50 steps), (c) `rhs()` doesn't actually conserve the quantity (sign error in the energy expression or a stray dissipation term).",
+      "tags": ["test", "conservation", "integrator", "dt"],
       "fix": {
         "type": "edit",
-        "description": "Cross-reference with animations.json to find the correct key, then update the code.",
-        "patch": "Open animations.json, verify the animation key exists, and correct the reference in the source file."
+        "description": "First, confirm the simulator extends RK4 (not a hand-rolled integrator). If yes and drift is still over tolerance, halve `simulationTimeStep`. If drift is huge (>>1%), the bug is in `rhs()` — re-derive the equations of motion.",
+        "patch": "Verify `class MyODE extends RK4` (not Euler). Halve dt. If drift is many %, the issue is in `rhs()` — re-derive equations."
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-reactive-006",
       "kind": "reactive",
       "signature": {
-        "stage": "runtime",
-        "errorCode": "SceneNotFound",
-        "messagePattern": "Scene '(.+)' not found",
-        "fileContext": "src/main.ts"
+        "stage": "test",
+        "errorCode": "ANALYTIC_BENCHMARK_MISMATCH",
+        "messagePattern": "compareToAnalytic.*observed=([\\d.eE+-]+).*expected=([\\d.eE+-]+).*tolerance",
+        "fileContext": "src/test/validation.test.ts"
       },
-      "rootCause": "Scene class not registered in main.ts Phaser config. Scene.start() targets a key that was never added via game.scene.add().",
-      "tags": ["scene", "registration", "wiring"],
+      "rootCause": "The simulator's observable diverges from the closed-form answer beyond tolerance. Most often the agent set up the wrong initial conditions (e.g. used a damped pendulum benchmark with damping ≠ 0, or compared the period of an asymmetric oscillator to the small-angle formula).",
+      "tags": ["test", "analytic", "initial-conditions"],
       "fix": {
         "type": "edit",
-        "description": "Import the scene class in main.ts and add it to the Phaser game config's scene list.",
-        "patch": "Add `import { XScene } from './scenes/XScene';` and `game.scene.add('XScene', XScene);` in main.ts."
+        "description": "Re-read the analytic formula's regime of validity. For T = 2π√(L/g) the conditions are damping = 0 AND small initial angle (< 0.1 rad). Set those before constructing the solver in the test.",
+        "patch": "Set `simConfig.dampingCoefficient.value = 0; simConfig.initialAngle.value = 0.05;` BEFORE constructing the solver in the analytic-benchmark test."
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-reactive-007",
+      "kind": "reactive",
+      "signature": {
+        "stage": "build",
+        "errorCode": "TSC_MISSING",
+        "messagePattern": "Cannot find module '\\.\\./lib/tsc\\.js'",
+        "fileContext": "package.json"
+      },
+      "rootCause": "`node_modules/typescript` is corrupted or never installed. Fresh OpenSim output dirs require `npm install` before `npm run build` will work.",
+      "tags": ["build", "node_modules", "first-run"],
+      "fix": {
+        "type": "shell",
+        "description": "Reinstall the project's node_modules. Do NOT add typescript via `npm install typescript` — the workspace package.json already pins it; the corruption is the issue.",
+        "patch": "rm -rf node_modules package-lock.json && npm install"
+      },
+      "occurrences": 0,
+      "contributingProjects": [],
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
+    },
+    {
+      "id": "seed-reactive-008",
+      "kind": "reactive",
+      "signature": {
+        "stage": "runtime",
+        "errorCode": "TypeError",
+        "messagePattern": "Cannot read propert(y|ies) of undefined",
+        "fileContext": "src/**/*.tsx"
+      },
+      "rootCause": "Object accessed before initialization. In OpenSim's r3f scenes this often means a `<Pendulum>` / `<AgentSwarm>` is mounted before its `solver` prop is ready (the agent passed `solver` rendered conditionally or before `useMemo` resolved). May also indicate a Dial reading `cfg.X.value` before simConfig is loaded.",
+      "tags": ["runtime", "react", "initialization-order"],
+      "fix": {
+        "type": "edit",
+        "description": "Wrap the suspect access in an explicit existence check, or move the solver construction into a `useMemo(() => new MyODE(), [])` that always returns a non-null instance.",
+        "patch": "Use `const solver = useMemo(() => new MyODE(), []);` so the solver is always present on first render."
+      },
+      "occurrences": 0,
+      "contributingProjects": [],
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
+    },
+    {
+      "id": "seed-reactive-009",
       "kind": "reactive",
       "signature": {
         "stage": "runtime",
@@ -139,164 +181,164 @@
         "messagePattern": "Maximum call stack size exceeded",
         "fileContext": "src/**/*.ts"
       },
-      "rootCause": "Infinite recursion, typically from a method calling itself without a proper base case, or circular scene transitions.",
-      "tags": ["runtime", "recursion", "infinite-loop"],
+      "rootCause": "Infinite recursion. In OpenSim solvers this most often means `rhs(t, y)` calls `this.step()` or `this.state` during the RK4 inner loop (RK4 calls rhs four times per step — referencing step() from inside rhs creates an infinite loop).",
+      "tags": ["runtime", "recursion", "solver"],
       "fix": {
         "type": "edit",
-        "description": "Add a base case to recursive calls, or break the circular dependency in scene/method calls.",
-        "patch": "Trace the call stack to identify the recursive loop and add a termination condition."
+        "description": "Inside `rhs(t, y)`, treat `y` as the only state input. Do NOT read `this.y`, do NOT call `this.step()`, and do NOT call `this.state`.",
+        "patch": "Remove any `this.step()` / `this.y` reads inside `rhs(t, y)` — the integrator passes the relevant state via the `y` parameter."
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-proactive-001",
       "kind": "proactive",
       "signature": {
         "stage": "build",
-        "errorCode": "ASSET_KEY_CONSISTENCY",
-        "messagePattern": "Asset key '(.+)' used in code but not found in asset-pack.json",
+        "errorCode": "SIM_CONFIG_FIELD_CONSISTENCY",
+        "messagePattern": "simConfig.(\\w+) accessed in (.+) but not defined",
         "fileContext": "src/**/*.ts"
       },
-      "rootCause": "Code references texture/audio keys that do not exist in the asset registry. Caught by scanning code for string literals and cross-referencing with asset-pack.json.",
-      "tags": ["proactive", "asset", "consistency"],
+      "rootCause": "Code references `simConfig.<field>.value` for a field the agent never added to `src/simConfig.json`. This builds (because tsc reads the JSON statically) but throws TypeError at runtime when `.value` is accessed on undefined.",
+      "tags": ["proactive", "config", "consistency"],
       "fix": {
-        "type": "edit",
-        "description": "Either add the missing key to asset-pack.json or correct the key in source code.",
-        "patch": "Grep all string literals used with this.add.image/sprite/audio, compare against asset-pack.json keys."
+        "type": "config",
+        "description": "Add the missing field to `src/simConfig.json` in the wrapper format `{ value, type, unit, description }` BEFORE writing code that reads it.",
+        "patch": "Append { \"<field>\": { \"value\": <number>, \"type\": \"number\", \"unit\": \"<SI>\", \"description\": \"<what it is>\" } } to simConfig.json."
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-proactive-002",
       "kind": "proactive",
       "signature": {
         "stage": "build",
-        "errorCode": "CONFIG_FIELD_CONSISTENCY",
-        "messagePattern": "Config field '(.+)' accessed in code but not defined in gameConfig.json",
-        "fileContext": "src/**/*.ts"
+        "errorCode": "UNIT_DECLARATION",
+        "messagePattern": "simConfig field '(.+)' is numeric but missing a 'unit'",
+        "fileContext": "src/simConfig.json"
       },
-      "rootCause": "Code accesses a gameConfig field that was never defined. Often caused by GDD→config copy errors or renamed fields.",
-      "tags": ["proactive", "config", "consistency"],
+      "rootCause": "Every numeric simConfig field MUST declare a SI `unit` so the Phase-5 `checkUnitConsistency` validator passes and so future static analysis can read units without hunting them down. Use `-` for dimensionless quantities.",
+      "tags": ["proactive", "config", "units", "phase-5"],
       "fix": {
         "type": "config",
-        "description": "Add the missing field to gameConfig.json with the correct value wrapper format.",
-        "patch": "Grep code for gameConfig field accesses, compare with gameConfig.json top-level keys."
+        "description": "Add `\"unit\": \"<SI>\"` to every numeric leaf field. Common SI strings: `m`, `kg`, `s`, `m/s`, `rad`, `rad/s`, `1/s`, `N`, `J`, `K`, `mol`, `V`, `A`, `Ω`, `-`.",
+        "patch": "{ \"value\": 1.0, \"type\": \"number\", \"unit\": \"m\", \"description\": \"...\" }"
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-proactive-003",
       "kind": "proactive",
       "signature": {
         "stage": "build",
-        "errorCode": "SCENE_REGISTRATION_CONSISTENCY",
-        "messagePattern": "Scene key '(.+)' used in scene\\.start\\(\\) but not registered in main\\.ts",
+        "errorCode": "SOLVER_HOOK_OVERRIDE",
+        "messagePattern": "(.+) extends a solver base but does not override: (.+)",
         "fileContext": "src/**/*.ts"
       },
-      "rootCause": "scene.start() or scene.launch() targets a scene key that is not registered in main.ts. Will fail at runtime with 'Scene not found'.",
-      "tags": ["proactive", "scene", "registration", "wiring"],
+      "rootCause": "A class extends `RK4`/`BaseODE`/`BaseAgent`/`BasePDE`/`BaseMC`/`BaseCA` but doesn't override the required hook(s). For ODE: `initialState()` + `rhs(t, y)`. For agent_based: `initialState()` + `updateAgent(self, neighbors, dt)`. Build will fail or produce a runtime no-op.",
+      "tags": ["proactive", "solver", "abstract", "hook-integrity"],
       "fix": {
         "type": "edit",
-        "description": "Register the missing scene in main.ts and ensure LevelManager.LEVEL_ORDER includes it if it's a game level.",
-        "patch": "Grep all scene.start/launch calls, compare target keys against main.ts scene registrations."
+        "description": "Open the archetype's `template_api.md` and add the listed abstract methods to the subclass.",
+        "patch": "Add the missing override methods, with bodies sourced from `_TemplateODE.ts` / `_TemplateAgent.ts` / etc."
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-proactive-004",
       "kind": "proactive",
       "signature": {
-        "stage": "build",
-        "errorCode": "ANIMATION_KEY_CONSISTENCY",
-        "messagePattern": "Animation key '(.+)' referenced in code but not defined in animations.json",
-        "fileContext": "src/**/*.ts"
+        "stage": "test",
+        "errorCode": "VALIDATOR_TEST_PRESENCE",
+        "messagePattern": "src/test/validation\\.test\\.ts (does not reference|is missing)",
+        "fileContext": "src/test/validation.test.ts"
       },
-      "rootCause": "Code plays an animation by key that doesn't exist in animations.json. Three-layer check: asset-pack.json → animations.json → code animKeys.",
-      "tags": ["proactive", "animation", "asset", "consistency"],
+      "rootCause": "Phase 6 expects a passing simulator to ship `src/test/validation.test.ts` that imports and asserts on all four Phase-5 validators (NaNDetector, checkUnitConsistency, checkConservation, compareToAnalytic). Skipping this defeats the entire Phase-5 mechanism.",
+      "tags": ["proactive", "test", "phase-6", "validators"],
       "fix": {
-        "type": "edit",
-        "description": "Verify the three-layer chain: asset frames exist → animation defined → code key matches.",
-        "patch": "Check asset-pack.json has frames, animations.json has the animation entry, and code uses the exact key."
+        "type": "create",
+        "description": "Create `src/test/validation.test.ts` and copy the four-validator skeleton from `docs/debug_protocol.md` §3 (Phase-6 minimum test). Customise the conservation / analytic targets for the specific simulator.",
+        "patch": "Copy the canonical skeleton from `docs/debug_protocol.md` §3 and customise the conserved scalar + analytic baseline for your simulator."
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-proactive-005",
       "kind": "proactive",
       "signature": {
-        "stage": "build",
-        "errorCode": "IMPORT_TYPE_KEYWORD",
-        "messagePattern": "Interface '(.+)' imported without 'type' keyword",
-        "fileContext": "src/**/*.ts"
+        "stage": "runtime",
+        "errorCode": "DIAL_SIMCONFIG_MUTATION",
+        "messagePattern": "<Dial onChange> in (.+) updates React state only",
+        "fileContext": "src/App.tsx"
       },
-      "rootCause": "TypeScript interfaces/types must be imported with the `type` keyword under verbatimModuleSyntax. Missing `type` causes build errors.",
-      "tags": ["proactive", "import", "typescript"],
+      "rootCause": "When a `<Dial>` onChange handler only sets React state (e.g. `setLength(v)`), the live solver's `rhs()` keeps reading the old `simConfig.length.value`. The visible UI changes but the simulation doesn't — a silent desync that looks like a frozen / non-responsive control.",
+      "tags": ["proactive", "ui", "simconfig", "react"],
       "fix": {
         "type": "edit",
-        "description": "Add `type` keyword to interface/type imports: `import { type X }` instead of `import { X }`.",
-        "patch": "Scan imports, identify which imported names are interfaces/types, and add the `type` keyword."
+        "description": "Each Dial onChange must (a) update React state via setX, (b) mutate `simConfig.<field>.value = v`, and (c) optionally `solver.reset()` if the parameter affects initial conditions.",
+        "patch": "onChange={(v) => { setX(v); simConfig.<field>.value = v; solver.reset(); }}"
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-proactive-006",
       "kind": "proactive",
       "signature": {
         "stage": "build",
-        "errorCode": "OVERRIDE_VISIBILITY",
-        "messagePattern": "Override method '(.+)' narrows visibility from (.+) to (.+)",
+        "errorCode": "HAND_ROLLED_INTEGRATOR",
+        "messagePattern": "appears to (re-implement RK4|hand-roll an Euler step)",
         "fileContext": "src/**/*.ts"
       },
-      "rootCause": "TypeScript does not allow narrowing method visibility in overrides (e.g., public→protected). This is a common mistake when copying template code.",
-      "tags": ["proactive", "typescript", "override", "visibility"],
+      "rootCause": "Agent code declares `k1 / k2 / k3 / k4` outside the BaseODE/RK4 class hierarchy, or steps the state with `y += dt * f(t, y)` (Euler). Both bypass the integrator infrastructure: no double-buffer safety, no NaNDetector hookup, no conservation guarantees.",
+      "tags": ["proactive", "integrator", "anti-pattern"],
       "fix": {
         "type": "edit",
-        "description": "Match or widen the visibility of the overriding method to match the base class.",
-        "patch": "Check base class method visibility and ensure the override uses the same or wider access modifier."
+        "description": "Replace the hand-rolled stepping with `class MyODE extends RK4 { ... initialState() ... rhs(t, y) ... }`.",
+        "patch": "Subclass RK4 (or the appropriate archetype concrete integrator). Do not write `y += dt * f(...)` outside the integrator base."
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     },
     {
       "id": "seed-proactive-007",
       "kind": "proactive",
       "signature": {
         "stage": "build",
-        "errorCode": "LEVEL_ORDER_MISMATCH",
-        "messagePattern": "LEVEL_ORDER\\[0\\] is '(.+)' but first game scene is '(.+)'",
-        "fileContext": "src/LevelManager.ts"
+        "errorCode": "IMPORT_TYPE_KEYWORD",
+        "messagePattern": "Possible interface '(.+)' imported without 'type' keyword",
+        "fileContext": "src/**/*.ts"
       },
-      "rootCause": "LevelManager.LEVEL_ORDER[0] still has the default template value instead of the actual first game scene key.",
-      "tags": ["proactive", "scene", "level-manager", "wiring"],
+      "rootCause": "Importing a TypeScript interface without the `type` keyword fails when the project uses `verbatimModuleSyntax`. OpenSim core ships with strict mode on.",
+      "tags": ["proactive", "typescript", "import"],
       "fix": {
         "type": "edit",
-        "description": "Update LEVEL_ORDER[0] in LevelManager.ts to match the actual first game scene key.",
-        "patch": "Set LEVEL_ORDER to the scene keys defined in main.ts scene registrations."
+        "description": "Move TypeScript-only types to a separate `import type { ... }` statement, or prefix individual entries with `type` inside the braces.",
+        "patch": "import { BaseODE, type ODEState, type BaseSolverConfig } from './solvers';"
       },
       "occurrences": 0,
       "contributingProjects": [],
-      "createdAt": "2026-04-19T00:00:00.000Z",
-      "lastMatchedAt": "2026-04-19T00:00:00.000Z"
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "lastMatchedAt": "2026-04-26T00:00:00.000Z"
     }
   ],
   "rules": [],

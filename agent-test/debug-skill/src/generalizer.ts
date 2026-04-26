@@ -7,7 +7,11 @@ import type {
   EvolutionEntry,
 } from './types.js';
 import { addRule } from './protocol-manager.js';
-import { type LLMConfig, getGeneralizerConfig, GENERALIZATION_THRESHOLD } from './config.js';
+import {
+  type LLMConfig,
+  getGeneralizerConfig,
+  GENERALIZATION_THRESHOLD,
+} from './config.js';
 
 // =============================================================================
 // Generalizer — detects repeated patterns and promotes them to reusable rules
@@ -164,9 +168,10 @@ function ruleBasedGeneralize(
     id,
     name,
     description: `Generalized from ${entries.length} occurrences. Common causes: ${description}`,
-    preconditions: fileContexts.size > 0
-      ? [...fileContexts].map((ctx) => `files matching ${ctx} exist`)
-      : ['project has TypeScript source files'],
+    preconditions:
+      fileContexts.size > 0
+        ? [...fileContexts].map((ctx) => `files matching ${ctx} exist`)
+        : ['project has TypeScript source files'],
     action: 'flag',
     checks,
     derivedFrom: entries.map((e) => e.id),
@@ -198,7 +203,7 @@ async function llmGenerateRule(
     )
     .join('\n');
 
-  const systemPrompt = `You are a pattern generalizer for a game project debug protocol.
+  const systemPrompt = `You are a pattern generalizer for the OpenSim simulator debug protocol.
 Given multiple related error entries, produce a generalized validation rule that can PREVENT these errors proactively.
 
 Output ONLY a JSON object:
@@ -209,7 +214,7 @@ Output ONLY a JSON object:
   "action": "flag | fix | block",
   "checks": [
     {
-      "target": "file | config | imports | scene-registration | assets",
+      "target": "file | config | imports | solver_registration | sim_config_field | unit_declaration | validator_test",
       "filePattern": "glob pattern (optional)",
       "query": "what to check (regex or description)",
       "violationMessage": "human-readable violation message"
@@ -239,7 +244,10 @@ function parseLLMRule(
   try {
     let jsonStr = content.trim();
     if (jsonStr.startsWith('```')) {
-      jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+      jsonStr = jsonStr
+        .replace(/```json?\n?/g, '')
+        .replace(/```/g, '')
+        .trim();
     }
 
     const parsed = JSON.parse(jsonStr) as Record<string, unknown>;

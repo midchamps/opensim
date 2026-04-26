@@ -149,8 +149,29 @@ export interface ProtocolRule {
 
 /** A single validation check within a ProtocolRule. */
 export interface ValidationCheck {
-  /** What to examine */
-  target: 'file' | 'config' | 'imports' | 'scene_registration' | 'assets';
+  /**
+   * What to examine.
+   * - file:                 a particular source file or glob
+   * - config:               simConfig.json field reference
+   * - imports:              TypeScript import graph
+   * - solver_registration:  every BaseSolver subclass declares the
+   *                         required hooks and is mounted in App.tsx
+   * - sim_config_field:     code accesses simConfig.<field>.value
+   *                         and the field exists in simConfig.json
+   * - unit_declaration:     every numeric simConfig field declares
+   *                         a `unit` string
+   * - validator_test:       src/test/validation.test.ts imports each
+   *                         of the four Phase-5 validators and asserts
+   *                         on their result
+   */
+  target:
+    | 'file'
+    | 'config'
+    | 'imports'
+    | 'solver_registration'
+    | 'sim_config_field'
+    | 'unit_declaration'
+    | 'validator_test';
 
   /** Glob or path pattern, e.g. src/STAR/STAR/STAR.ts */
   filePattern?: string;

@@ -104,7 +104,7 @@ function createNewFamily(
   return {
     id,
     archetype: patterns.archetype,
-    physicsProfile: patterns.physicsProfile,
+    numericProfile: patterns.numericProfile,
     discoveredAtTask: taskNumber,
     contributingProjects: [patterns.projectPath],
     stability: computeStability([patterns.projectPath]),

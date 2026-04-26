@@ -17,12 +17,21 @@ import { getProactiveEntries } from './protocol-manager.js';
 //    high-frequency inconsistency classes discovered in prior tasks"
 //
 // Runs BEFORE build/test/dev to catch known issues early.
+//
+// Built-in proactive checks (matched by entry.signature.errorCode):
+//   - SIM_CONFIG_FIELD_CONSISTENCY  — every simConfig.<field> access exists in JSON
+//   - UNIT_DECLARATION              — every numeric simConfig field declares a unit
+//   - SOLVER_HOOK_OVERRIDE          — every BaseSolver subclass overrides required hooks
+//   - VALIDATOR_TEST_PRESENCE       — src/test/validation.test.ts uses all 4 validators
+//   - DIAL_SIMCONFIG_MUTATION       — Dial onChange handlers also mutate simConfig.field.value
+//   - HAND_ROLLED_INTEGRATOR        — agent code re-implements RK4 / Euler instead of subclassing
+//   - IMPORT_TYPE_KEYWORD           — TypeScript "import { type … }" hygiene
 // =============================================================================
 
 /**
  * Run all proactive validations from the protocol against a project.
  *
- * @param projectDir - Absolute path to the game project
+ * @param projectDir - Absolute path to the simulator project
  * @param protocol - The current debug protocol P
  * @returns Array of validation results (one per proactive entry / rule)
  */
@@ -32,14 +41,12 @@ export async function validateProject(
 ): Promise<ValidationResult[]> {
   const results: ValidationResult[] = [];
 
-  // Run proactive entry-based checks
   const proactiveEntries = getProactiveEntries(protocol);
   for (const entry of proactiveEntries) {
     const result = await runEntryCheck(projectDir, entry);
     results.push(result);
   }
 
-  // Run generalized rule checks
   for (const rule of protocol.rules) {
     const result = await runRuleCheck(projectDir, rule);
     results.push(result);
@@ -58,23 +65,26 @@ async function runEntryCheck(
   const violations: string[] = [];
 
   switch (entry.signature.errorCode) {
-    case 'ASSET_KEY_CONSISTENCY':
-      violations.push(...await checkAssetKeyConsistency(projectDir));
+    case 'SIM_CONFIG_FIELD_CONSISTENCY':
+      violations.push(...(await checkSimConfigFieldConsistency(projectDir)));
       break;
-    case 'CONFIG_FIELD_CONSISTENCY':
-      violations.push(...await checkConfigFieldConsistency(projectDir));
+    case 'UNIT_DECLARATION':
+      violations.push(...(await checkUnitDeclaration(projectDir)));
       break;
-    case 'SCENE_REGISTRATION_CONSISTENCY':
-      violations.push(...await checkSceneRegistration(projectDir));
+    case 'SOLVER_HOOK_OVERRIDE':
+      violations.push(...(await checkSolverHookOverride(projectDir)));
       break;
-    case 'ANIMATION_KEY_CONSISTENCY':
-      violations.push(...await checkAnimationKeyConsistency(projectDir));
+    case 'VALIDATOR_TEST_PRESENCE':
+      violations.push(...(await checkValidatorTestPresence(projectDir)));
+      break;
+    case 'DIAL_SIMCONFIG_MUTATION':
+      violations.push(...(await checkDialSimConfigMutation(projectDir)));
+      break;
+    case 'HAND_ROLLED_INTEGRATOR':
+      violations.push(...(await checkHandRolledIntegrator(projectDir)));
       break;
     case 'IMPORT_TYPE_KEYWORD':
-      violations.push(...await checkImportTypeKeyword(projectDir));
-      break;
-    case 'LEVEL_ORDER_MISMATCH':
-      violations.push(...await checkLevelOrder(projectDir));
+      violations.push(...(await checkImportTypeKeyword(projectDir)));
       break;
     default:
       break;
@@ -126,140 +136,302 @@ async function runRuleCheck(
 }
 
 // -----------------------------------------------------------------------------
-// Concrete validation checks (from P0 seed)
+// Concrete validation checks (OpenSim seed)
 // -----------------------------------------------------------------------------
 
-/**
- * Check that all texture/audio keys referenced in code exist in asset-pack.json.
- */
-async function checkAssetKeyConsistency(projectDir: string): Promise<string[]> {
-  const violations: string[] = [];
-  const assetPackPath = path.join(projectDir, 'public', 'assets', 'asset-pack.json');
-
-  try {
-    const assetPack = JSON.parse(await fs.readFile(assetPackPath, 'utf-8'));
-    const registeredKeys = extractAssetKeys(assetPack);
-    const tsFiles = await collectFiles(path.join(projectDir, 'src', '**', '*.ts'));
-
-    for (const filePath of tsFiles) {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const usedKeys = extractUsedAssetKeys(content);
-      for (const key of usedKeys) {
-        if (!registeredKeys.has(key)) {
-          violations.push(
-            `Asset key '${key}' used in ${path.relative(projectDir, filePath)} but not found in asset-pack.json`,
-          );
-        }
-      }
-    }
-  } catch {
-    // asset-pack.json not found or unparseable — skip
-  }
-
-  return violations;
-}
+const RESERVED_CONFIG_KEYS = new Set([
+  'value',
+  'type',
+  'unit',
+  'description',
+  'min',
+  'max',
+  'json',
+  'screenSize',
+  'renderConfig',
+  'debugConfig',
+]);
 
 /**
- * Check that config fields accessed in code exist in gameConfig.json.
+ * Every `simConfig.<field>` access in code must correspond to a field
+ * defined in `src/simConfig.json`.
  */
-async function checkConfigFieldConsistency(projectDir: string): Promise<string[]> {
+async function checkSimConfigFieldConsistency(
+  projectDir: string,
+): Promise<string[]> {
   const violations: string[] = [];
-  const configPath = path.join(projectDir, 'src', 'gameConfig.json');
+  const configPath = path.join(projectDir, 'src', 'simConfig.json');
 
   try {
     const config = JSON.parse(await fs.readFile(configPath, 'utf-8'));
-    const configKeys = new Set(Object.keys(config));
-    const tsFiles = await collectFiles(path.join(projectDir, 'src', '**', '*.ts'));
+    const allKeys = collectAllConfigKeys(config);
 
-    for (const filePath of tsFiles) {
+    const codeFiles = [
+      ...(await collectFilesRecursive(path.join(projectDir, 'src'), '.ts')),
+      ...(await collectFilesRecursive(path.join(projectDir, 'src'), '.tsx')),
+    ];
+
+    for (const filePath of codeFiles) {
+      // Skip simConfig.json declarations themselves
+      if (filePath.endsWith('simConfig.json')) continue;
+
       const content = await fs.readFile(filePath, 'utf-8');
-      // Match patterns like gameConfig.someField or config.someField.value
-      const fieldAccesses = content.matchAll(/(?:gameConfig|config)\.(\w+)/g);
+      const fieldAccesses = content.matchAll(/simConfig\.(\w+)/g);
       for (const match of fieldAccesses) {
         const field = match[1]!;
-        // Skip common non-config fields
-        if (['json', 'value', 'type', 'description'].includes(field)) continue;
-        if (!configKeys.has(field)) {
+        if (RESERVED_CONFIG_KEYS.has(field)) continue;
+        if (!allKeys.has(field)) {
           violations.push(
-            `Config field '${field}' accessed in ${path.relative(projectDir, filePath)} but not defined in gameConfig.json`,
+            `simConfig.${field} accessed in ${path.relative(projectDir, filePath)} but not defined in src/simConfig.json`,
           );
         }
       }
     }
   } catch {
-    // config not found — skip
+    // simConfig.json not found — skip
+  }
+
+  return violations;
+}
+
+function collectAllConfigKeys(config: Record<string, unknown>): Set<string> {
+  const keys = new Set<string>();
+  for (const [k, v] of Object.entries(config)) {
+    keys.add(k);
+    if (
+      v &&
+      typeof v === 'object' &&
+      !Array.isArray(v) &&
+      !('value' in (v as Record<string, unknown>))
+    ) {
+      // Namespaced: collect children too so `simConfig.<ns>.field` works
+      for (const subKey of Object.keys(v as Record<string, unknown>)) {
+        keys.add(subKey);
+      }
+    }
+  }
+  return keys;
+}
+
+/**
+ * Every leaf numeric simConfig field MUST declare a `unit`.
+ * The infrastructure namespaces (screenSize / renderConfig / debugConfig)
+ * are exempt and the unit `-` marks dimensionless.
+ */
+async function checkUnitDeclaration(projectDir: string): Promise<string[]> {
+  const violations: string[] = [];
+  const configPath = path.join(projectDir, 'src', 'simConfig.json');
+
+  try {
+    const raw = await fs.readFile(configPath, 'utf-8');
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    walkConfigForUnits(config, '', violations);
+  } catch {
+    // simConfig.json not found — skip
+  }
+
+  return violations;
+}
+
+const SKIP_UNIT_PATHS = new Set([
+  'screenSize',
+  'screenSize.width',
+  'screenSize.height',
+  'renderConfig',
+  'renderConfig.shadows',
+  'renderConfig.antialias',
+  'debugConfig',
+  'debugConfig.showGrid',
+  'debugConfig.showAxes',
+]);
+
+function walkConfigForUnits(
+  obj: unknown,
+  pathSoFar: string,
+  out: string[],
+): void {
+  if (SKIP_UNIT_PATHS.has(pathSoFar)) return;
+  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return;
+  const record = obj as Record<string, unknown>;
+
+  if ('value' in record) {
+    if (typeof record.value === 'number') {
+      const unit = record.unit;
+      if (
+        unit === undefined ||
+        (typeof unit === 'string' && unit.trim() === '')
+      ) {
+        out.push(
+          `simConfig field '${pathSoFar}' is numeric but missing a 'unit' declaration (use '-' for dimensionless)`,
+        );
+      } else if (typeof unit !== 'string') {
+        out.push(
+          `simConfig field '${pathSoFar}' has non-string unit (${typeof unit})`,
+        );
+      }
+    }
+    return;
+  }
+
+  for (const [k, v] of Object.entries(record)) {
+    walkConfigForUnits(v, pathSoFar ? `${pathSoFar}.${k}` : k, out);
+  }
+}
+
+/**
+ * Every BaseSolver subclass must override the required hooks for its
+ * archetype. We approximate by requiring that any class extending a
+ * Base*ODE / Base*Agent / Base*PDE / etc. override at least
+ * `initialState` and one of {step, rhs, updateAgent, transitionRule}.
+ */
+async function checkSolverHookOverride(projectDir: string): Promise<string[]> {
+  const violations: string[] = [];
+
+  const codeFiles = await collectFilesRecursive(
+    path.join(projectDir, 'src'),
+    '.ts',
+  );
+
+  for (const filePath of codeFiles) {
+    if (/_Template\w+\.ts$/.test(filePath)) continue;
+    if (/\bBase\w+\.ts$/.test(filePath)) continue;
+    const content = await fs.readFile(filePath, 'utf-8');
+    const classMatch = content.match(
+      /class\s+(\w+)\s+extends\s+(RK4|RK45|BaseODE|BaseAgent|BasePDE|BaseMC|BaseCA)\b/,
+    );
+    if (!classMatch) continue;
+
+    const className = classMatch[1]!;
+    const hasInitial = /\binitialState\s*\(/.test(content);
+    const hasStep =
+      /\b(?:step|rhs|updateAgent|transitionRule|cellUpdate|sample)\s*\(/.test(
+        content,
+      );
+
+    const missing: string[] = [];
+    if (!hasInitial) missing.push('initialState()');
+    if (!hasStep) missing.push('step()/rhs()/updateAgent()/...');
+    if (missing.length) {
+      violations.push(
+        `${className} (${path.relative(projectDir, filePath)}) extends a solver base but does not override: ${missing.join(', ')}`,
+      );
+    }
   }
 
   return violations;
 }
 
 /**
- * Check that all scene.start()/scene.launch() targets are registered in main.ts.
+ * The Phase-6 dictum: a passing simulator ships
+ * `src/test/validation.test.ts` that imports every Phase-5 validator
+ * and asserts on its result.
  */
-async function checkSceneRegistration(projectDir: string): Promise<string[]> {
+async function checkValidatorTestPresence(
+  projectDir: string,
+): Promise<string[]> {
   const violations: string[] = [];
-  const mainPath = path.join(projectDir, 'src', 'main.ts');
+  const testPath = path.join(projectDir, 'src', 'test', 'validation.test.ts');
 
   try {
-    const mainContent = await fs.readFile(mainPath, 'utf-8');
-    const registeredScenes = new Set<string>();
-    const sceneAddMatches = mainContent.matchAll(/scene\.add\(\s*['"](.+?)['"]/g);
-    for (const m of sceneAddMatches) registeredScenes.add(m[1]!);
-    // Also check scene config array
-    const sceneConfigMatches = mainContent.matchAll(/key:\s*['"](.+?)['"]/g);
-    for (const m of sceneConfigMatches) registeredScenes.add(m[1]!);
-
-    const tsFiles = await collectFiles(path.join(projectDir, 'src', '**', '*.ts'));
-    for (const filePath of tsFiles) {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const sceneStarts = content.matchAll(/scene\.(?:start|launch)\(\s*['"](.+?)['"]/g);
-      for (const match of sceneStarts) {
-        const sceneKey = match[1]!;
-        if (!registeredScenes.has(sceneKey)) {
-          violations.push(
-            `Scene key '${sceneKey}' used in ${path.relative(projectDir, filePath)} but not registered in main.ts`,
-          );
-        }
+    const content = await fs.readFile(testPath, 'utf-8');
+    const required = [
+      'NaNDetector',
+      'checkUnitConsistency',
+      'checkConservation',
+      'compareToAnalytic',
+    ];
+    for (const name of required) {
+      if (!content.includes(name)) {
+        violations.push(
+          `src/test/validation.test.ts does not reference '${name}' — Phase-6 expects all four validators to be exercised`,
+        );
       }
     }
   } catch {
-    // main.ts not found — skip
+    violations.push(
+      'src/test/validation.test.ts is missing — Phase 6 expects it to exist with all four validators',
+    );
   }
 
   return violations;
 }
 
 /**
- * Check that animation keys referenced in code exist in animations.json.
+ * Every `<Dial onChange={...}>` handler must update both React state
+ * AND `simConfig.<field>.value` so the solver's RHS sees the new
+ * value. A handler that only sets React state silently desyncs.
  */
-async function checkAnimationKeyConsistency(projectDir: string): Promise<string[]> {
+async function checkDialSimConfigMutation(
+  projectDir: string,
+): Promise<string[]> {
   const violations: string[] = [];
-  const animPath = path.join(projectDir, 'public', 'assets', 'animations.json');
+  const codeFiles = [
+    ...(await collectFilesRecursive(path.join(projectDir, 'src'), '.tsx')),
+    ...(await collectFilesRecursive(path.join(projectDir, 'src'), '.ts')),
+  ];
 
-  try {
-    const animData = JSON.parse(await fs.readFile(animPath, 'utf-8'));
-    const animKeys = new Set<string>();
-    if (animData.anims && Array.isArray(animData.anims)) {
-      for (const anim of animData.anims) {
-        if (anim.key) animKeys.add(anim.key as string);
+  for (const filePath of codeFiles) {
+    const content = await fs.readFile(filePath, 'utf-8');
+    // Find each <Dial ... onChange={(v) => ...}> block
+    const dialBlocks = content.matchAll(
+      /<Dial[^>]*onChange=\{([^}]+)\}[^>]*\/?>/g,
+    );
+    for (const m of dialBlocks) {
+      const handler = m[1] ?? '';
+      // The handler should mention `simConfig.` AND `.value =`. Fallback
+      // patterns are also acceptable: `simConfig.x.value = v`,
+      // `(simConfig as any).x.value = v`. Heuristic: search for `simConfig`.
+      if (!handler.includes('simConfig')) {
+        violations.push(
+          `<Dial onChange> in ${path.relative(projectDir, filePath)} updates React state only — also mutate simConfig.<field>.value so the solver sees the new value`,
+        );
       }
     }
+  }
 
-    const tsFiles = await collectFiles(path.join(projectDir, 'src', '**', '*.ts'));
-    for (const filePath of tsFiles) {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const animRefs = content.matchAll(/\.play\(\s*['"](.+?)['"]/g);
-      for (const match of animRefs) {
-        const key = match[1]!;
-        if (!animKeys.has(key) && animKeys.size > 0) {
-          violations.push(
-            `Animation key '${key}' used in ${path.relative(projectDir, filePath)} but not defined in animations.json`,
-          );
-        }
-      }
+  return violations;
+}
+
+/**
+ * Detect agent-written hand-rolled integrators — the recipe
+ * `y[i+1] = y[i] + dt * F(t, y)` (Euler) or in-place RK4 outside the
+ * BaseODE / RK4 hierarchy. The fix is to subclass RK4 and override
+ * `rhs(t, y)`.
+ */
+async function checkHandRolledIntegrator(
+  projectDir: string,
+): Promise<string[]> {
+  const violations: string[] = [];
+
+  const codeFiles = await collectFilesRecursive(
+    path.join(projectDir, 'src'),
+    '.ts',
+  );
+
+  for (const filePath of codeFiles) {
+    if (/(?:RK4|RK45|BaseODE|BaseSolver)\.ts$/.test(filePath)) continue;
+    const content = await fs.readFile(filePath, 'utf-8');
+
+    // Heuristic Euler: y_next = y + dt * f
+    const eulerHits = content.match(/\b\w+\s*\+=\s*\bdt\s*\*\s*\w+\(/g);
+    if (eulerHits && eulerHits.length > 0) {
+      violations.push(
+        `${path.relative(projectDir, filePath)} appears to hand-roll an Euler step (y += dt * f). Subclass RK4 and override rhs(t, y) instead.`,
+      );
     }
-  } catch {
-    // animations.json not found — skip
+
+    // Heuristic in-place RK4: declares k1, k2, k3, k4 close together
+    if (
+      /\bk1\b/.test(content) &&
+      /\bk2\b/.test(content) &&
+      /\bk3\b/.test(content) &&
+      /\bk4\b/.test(content) &&
+      !/\bextends\s+RK4\b/.test(content)
+    ) {
+      violations.push(
+        `${path.relative(projectDir, filePath)} appears to re-implement RK4 (k1/k2/k3/k4) without extending the RK4 base class. Subclass RK4 instead.`,
+      );
+    }
   }
 
   return violations;
@@ -270,9 +442,12 @@ async function checkAnimationKeyConsistency(projectDir: string): Promise<string[
  */
 async function checkImportTypeKeyword(projectDir: string): Promise<string[]> {
   const violations: string[] = [];
-  const tsFiles = await collectFiles(path.join(projectDir, 'src', '**', '*.ts'));
+  const codeFiles = [
+    ...(await collectFilesRecursive(path.join(projectDir, 'src'), '.ts')),
+    ...(await collectFilesRecursive(path.join(projectDir, 'src'), '.tsx')),
+  ];
 
-  for (const filePath of tsFiles) {
+  for (const filePath of codeFiles) {
     const content = await fs.readFile(filePath, 'utf-8');
     const importMatches = content.matchAll(
       /import\s*\{([^}]+)\}\s*from\s*['"](.+?)['"]/g,
@@ -282,8 +457,12 @@ async function checkImportTypeKeyword(projectDir: string): Promise<string[]> {
       const names = match[1]!.split(',').map((n) => n.trim());
       for (const name of names) {
         if (name.startsWith('type ')) continue;
-        // Heuristic: names starting with I + uppercase, or ending in Config/Props/Options
-        if (/^I[A-Z]/.test(name) || /(?:Config|Props|Options|Params|State|Result)$/.test(name)) {
+        if (
+          /^I[A-Z]/.test(name) ||
+          /(?:Config|Props|Options|Params|State|Result|Spec|Profile)$/.test(
+            name,
+          )
+        ) {
           violations.push(
             `Possible interface '${name}' imported without 'type' keyword in ${path.relative(projectDir, filePath)}`,
           );
@@ -295,42 +474,12 @@ async function checkImportTypeKeyword(projectDir: string): Promise<string[]> {
   return violations;
 }
 
-/**
- * Check that LEVEL_ORDER[0] matches the first actual game scene.
- */
-async function checkLevelOrder(projectDir: string): Promise<string[]> {
-  const violations: string[] = [];
-  const levelMgrPath = path.join(projectDir, 'src', 'LevelManager.ts');
-
-  try {
-    const content = await fs.readFile(levelMgrPath, 'utf-8');
-    const orderMatch = content.match(/LEVEL_ORDER\s*=\s*\[([^\]]+)\]/);
-    if (orderMatch) {
-      const entries = orderMatch[1]!.match(/['"](.+?)['"]/g);
-      if (entries && entries.length > 0) {
-        const firstScene = entries[0]!.replace(/['"]/g, '');
-        if (firstScene === 'Level1Scene' || firstScene === 'Level1') {
-          // Likely still the template default
-          violations.push(
-            `LEVEL_ORDER[0] is '${firstScene}' — verify this is your actual first game scene and not a template default`,
-          );
-        }
-      }
-    }
-  } catch {
-    // LevelManager.ts not found — skip
-  }
-
-  return violations;
-}
-
 // -----------------------------------------------------------------------------
 // File utilities
 // -----------------------------------------------------------------------------
 
 /** Recursively collect files matching a simple glob pattern. */
 async function collectFiles(pattern: string): Promise<string[]> {
-  // Simple implementation: resolve the directory and recurse
   const parts = pattern.split('**');
   if (parts.length < 2) {
     try {
@@ -358,10 +507,14 @@ async function collectFilesRecursive(
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.git') {
+        if (
+          entry.name === 'node_modules' ||
+          entry.name === 'dist' ||
+          entry.name === '.git'
+        ) {
           continue;
         }
-        result.push(...await collectFilesRecursive(fullPath, ext));
+        result.push(...(await collectFilesRecursive(fullPath, ext)));
       } else if (entry.isFile() && entry.name.endsWith(ext)) {
         result.push(fullPath);
       }
@@ -370,51 +523,4 @@ async function collectFilesRecursive(
     // Directory not accessible
   }
   return result;
-}
-
-/**
- * Extract all registered asset keys from an asset-pack.json structure.
- */
-function extractAssetKeys(assetPack: Record<string, unknown>): Set<string> {
-  const keys = new Set<string>();
-
-  function walk(obj: unknown): void {
-    if (typeof obj !== 'object' || obj === null) return;
-    if (Array.isArray(obj)) {
-      for (const item of obj) walk(item);
-      return;
-    }
-    const record = obj as Record<string, unknown>;
-    if (typeof record['key'] === 'string') {
-      keys.add(record['key']);
-    }
-    for (const value of Object.values(record)) {
-      walk(value);
-    }
-  }
-
-  walk(assetPack);
-  return keys;
-}
-
-/**
- * Extract asset key references from TypeScript source code.
- */
-function extractUsedAssetKeys(content: string): Set<string> {
-  const keys = new Set<string>();
-  // Match this.add.image(..., 'key'), this.textures.exists('key'), etc.
-  const patterns = [
-    /\.(?:image|sprite|audio|sound)\(\s*(?:[^,]+,\s*)?['"](.+?)['"]/g,
-    /\.setTexture\(\s*['"](.+?)['"]/g,
-    /textures\.exists\(\s*['"](.+?)['"]/g,
-    /\.load\.(?:image|audio|spritesheet)\(\s*['"](.+?)['"]/g,
-  ];
-
-  for (const pattern of patterns) {
-    for (const match of content.matchAll(pattern)) {
-      if (match[1]) keys.add(match[1]);
-    }
-  }
-
-  return keys;
 }

@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -8,19 +9,17 @@ export default defineConfig({
     port: 8080,
     hmr: false,
   },
-  plugins: [],
+  plugins: [react()],
   css: {
     postcss: './postcss.config.js',
   },
-  resolve: {
-    alias: {
-      phaser: 'phaser/dist/phaser.js',
-    },
-  },
   test: {
     environment: 'jsdom',
-    setupFiles: ['src/test/setup.ts'],
-    include: ['src/test/**/*.{test,spec}.ts'],
+    // Match `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`. The
+    // earlier glob `*.{test,spec,test.tsx,spec.tsx}` expanded to the
+    // wrong set — `.ts` test files were silently skipped, which made
+    // Phase-5 validator tests look like they ran when they didn't.
+    include: ['src/test/**/*.{test,spec}.{ts,tsx}'],
     testTimeout: 10000,
     coverage: {
       provider: 'v8',

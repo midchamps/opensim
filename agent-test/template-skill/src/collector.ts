@@ -2,7 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { FileEntry, ProjectSnapshot } from './types.js';
 
-const INCLUDED_EXTENSIONS = new Set(['.ts', '.json', '.js', '.md']);
+const INCLUDED_EXTENSIONS = new Set(['.ts', '.tsx', '.json', '.js', '.md']);
 
 const EXCLUDED_DIRS = new Set([
   'node_modules',
@@ -11,6 +11,7 @@ const EXCLUDED_DIRS = new Set([
   'dist',
   'coverage',
   '.cursor',
+  'output',
 ]);
 
 const EXCLUDED_FILES = new Set([
@@ -59,14 +60,14 @@ async function walkDir(
 }
 
 /**
- * Try to read and parse gameConfig.json from common locations.
+ * Try to read and parse simConfig.json from common locations.
  */
-async function loadGameConfig(
+async function loadSimConfig(
   projectPath: string,
 ): Promise<Record<string, unknown> | null> {
   const candidates = [
-    path.join(projectPath, 'src', 'gameConfig.json'),
-    path.join(projectPath, 'gameConfig.json'),
+    path.join(projectPath, 'src', 'simConfig.json'),
+    path.join(projectPath, 'simConfig.json'),
   ];
   for (const p of candidates) {
     try {
@@ -81,40 +82,45 @@ async function loadGameConfig(
 
 /**
  * Build a concise code summary for LLM context.
- * Focuses on scene files, base classes, config, and directory structure.
+ * Focuses on solver / validator / lab files and the simConfig schema.
  */
 function buildCodeSummary(
   files: FileEntry[],
-  gameConfig: Record<string, unknown> | null,
+  simConfig: Record<string, unknown> | null,
 ): string {
   const sections: string[] = [];
 
-  // File tree (TS files only)
-  const tsFiles = files.filter((f) => f.extension === '.ts');
+  // File tree (TS / TSX only)
+  const codeFiles = files.filter(
+    (f) => f.extension === '.ts' || f.extension === '.tsx',
+  );
   sections.push(
-    '## Source Files\n' + tsFiles.map((f) => `- ${f.relativePath}`).join('\n'),
+    '## Source Files\n' +
+      codeFiles.map((f) => `- ${f.relativePath}`).join('\n'),
   );
 
-  // Config top-level keys
-  if (gameConfig) {
+  // Config top-level keys (skip the universal infrastructure namespaces)
+  if (simConfig) {
+    const keys = Object.keys(simConfig).filter(
+      (k) => !['screenSize', 'renderConfig', 'debugConfig'].includes(k),
+    );
     sections.push(
-      '## gameConfig.json top-level keys\n' +
-        Object.keys(gameConfig).join(', '),
+      '## simConfig.json top-level keys (excluding screenSize / renderConfig / debugConfig)\n' +
+        keys.join(', '),
     );
   }
 
-  // Key file snippets (first 80 lines of scene/character/entity files)
+  // Key file snippets (first 80 lines)
   const keyPatterns = [
-    /scenes?\//i,
-    /characters?\//i,
-    /entities?\//i,
-    /behaviors?\//i,
-    /systems?\//i,
-    /towers?\//i,
-    /enemies?\//i,
-    /ui\//i,
+    /solvers?\//i,
+    /validators?\//i,
+    /lab\//i,
+    /observables\.ts$/i,
+    /\bApp\.tsx$/,
+    /\bmain\.tsx$/,
+    /test\/validation/i,
   ];
-  for (const file of tsFiles) {
+  for (const file of codeFiles) {
     if (keyPatterns.some((p) => p.test(file.relativePath))) {
       const lines = file.content.split('\n').slice(0, 80).join('\n');
       sections.push(
@@ -127,7 +133,7 @@ function buildCodeSummary(
 }
 
 /**
- * Collect a complete snapshot of a finished game project.
+ * Collect a complete snapshot of a finished simulator project.
  */
 export async function collectProject(
   projectPath: string,
@@ -149,8 +155,8 @@ export async function collectProject(
 
   await walkDir(absPath, absPath, files, fileTree);
 
-  const gameConfig = await loadGameConfig(absPath);
-  const codeSummary = buildCodeSummary(files, gameConfig);
+  const simConfig = await loadSimConfig(absPath);
+  const codeSummary = buildCodeSummary(files, simConfig);
 
   console.log(`[Collector] Collected ${files.length} files from ${absPath}`);
 
@@ -158,7 +164,7 @@ export async function collectProject(
     projectPath: absPath,
     files,
     fileTree,
-    gameConfig,
+    simConfig,
     codeSummary,
   };
 }

@@ -12,3 +12,4 @@
 export { Dial, type DialProps } from './Dial';
 export { Button3D, type Button3DProps, type Button3DKind } from './Button3D';
 export { DigitalReadout, type DigitalReadoutProps } from './DigitalReadout';
+export { ChartMonitor, type ChartMonitorProps } from './ChartMonitor';

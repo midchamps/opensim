@@ -1,14 +1,23 @@
 import { BaseLabScene } from './lab/scenes';
+import { InstrumentDemo } from './InstrumentDemo';
 
 /**
  * Root React component for an OpenSim simulation.
  *
- * Phase 1 Commit 3 — mount `BaseLabScene` so the empty workbench
- * (Gate 1) is visible. Future commits will pass archetype-specific
- * children (Pendulum, Beaker, Dial, ChartMonitor, ...) into the
- * scene; the agent customises a simulation by replacing the body of
- * this `<App>` component, never by modifying `BaseLabScene` itself.
+ * Default — mount `BaseLabScene` so the empty workbench (Gate 1) is
+ * visible. The agent customises a real simulation by replacing this
+ * with archetype-specific children passed into BaseLabScene.
+ *
+ * Dev-only demo — `?demo=instruments` URL query renders the
+ * InstrumentDemo (Gate 2) which exercises every Phase-2 widget on
+ * the workbench. This is a developer-only escape hatch and is never
+ * touched by agent runs.
  */
 export function App() {
+  const demo =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('demo');
+
+  if (demo === 'instruments') return <InstrumentDemo />;
   return <BaseLabScene />;
 }

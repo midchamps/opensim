@@ -1,0 +1,40 @@
+{
+  "screenSize": {
+    "width": {
+      "value": 1280,
+      "type": "number",
+      "unit": "px",
+      "description": "Canvas width in pixels"
+    },
+    "height": {
+      "value": 800,
+      "type": "number",
+      "unit": "px",
+      "description": "Canvas height in pixels"
+    }
+  },
+  "renderConfig": {
+    "shadows": {
+      "value": true,
+      "type": "boolean",
+      "description": "Enable shadow casting on workbench objects"
+    },
+    "antialias": {
+      "value": true,
+      "type": "boolean",
+      "description": "Enable WebGL antialiasing"
+    }
+  },
+  "debugConfig": {
+    "showGrid": {
+      "value": false,
+      "type": "boolean",
+      "description": "Show helper grid on the workbench surface"
+    },
+    "showAxes": {
+      "value": false,
+      "type": "boolean",
+      "description": "Show world XYZ axes overlay"
+    }
+  }
+}

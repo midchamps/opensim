@@ -11,6 +11,8 @@
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
+    /* JSX for react-three-fiber */
+    "jsx": "react-jsx",
     /* Linting */
     "strictPropertyInitialization": false,
     "noUncheckedIndexedAccess": false,

@@ -1,0 +1,33 @@
+/**
+ * @license
+ * Copyright 2025 Qwen
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import { AuthType } from '@opengame/opengame-core';
+export type AvailableModel = {
+    id: string;
+    label: string;
+    description?: string;
+    isVision?: boolean;
+};
+export declare const MAINLINE_VLM = "vision-model";
+export declare const MAINLINE_CODER = "coder-model";
+export declare const AVAILABLE_MODELS_QWEN: AvailableModel[];
+/**
+ * Get available Qwen models filtered by vision model preview setting
+ */
+export declare function getFilteredQwenModels(visionModelPreviewEnabled: boolean): AvailableModel[];
+/**
+ * Currently we use the single model of `OPENAI_MODEL` in the env.
+ * In the future, after settings.json is updated, we will allow users to configure this themselves.
+ */
+export declare function getOpenAIAvailableModelFromEnv(): AvailableModel | null;
+export declare function getAnthropicAvailableModelFromEnv(): AvailableModel | null;
+export declare function getAvailableModelsForAuthType(authType: AuthType): AvailableModel[];
+/**
+/**
+ * Hard code the default vision model as a string literal,
+ * until our coding model supports multimodal.
+ */
+export declare function getDefaultVisionModel(): string;
+export declare function isVisionModel(modelId: string): boolean;

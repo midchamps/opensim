@@ -1,0 +1,90 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import type { Config, OutputUpdateHandler, ToolCallResponseInfo, SessionMetrics } from '@opengame/opengame-core';
+import type { Part, PartListUnion } from '@google/genai';
+import type { CLIUserMessage, Usage, PermissionMode, CLISystemMessage } from '../nonInteractive/types.js';
+import type { JsonOutputAdapterInterface } from '../nonInteractive/io/BaseJsonOutputAdapter.js';
+/**
+ * Normalizes various part list formats into a consistent Part[] array.
+ *
+ * @param parts - Input parts in various formats (string, Part, Part[], or null)
+ * @returns Normalized array of Part objects
+ */
+export declare function normalizePartList(parts: PartListUnion | null): Part[];
+/**
+ * Extracts user message parts from a CLI protocol message.
+ *
+ * @param message - User message sourced from the CLI protocol layer
+ * @returns Extracted parts or null if the message lacks textual content
+ */
+export declare function extractPartsFromUserMessage(message: CLIUserMessage | undefined): PartListUnion | null;
+/**
+ * Extracts usage metadata from the Gemini client's debug responses.
+ *
+ * @param geminiClient - The Gemini client instance
+ * @returns Usage information or undefined if not available
+ */
+export declare function extractUsageFromGeminiClient(geminiClient: unknown): Usage | undefined;
+/**
+ * Computes Usage information from SessionMetrics using computeSessionStats.
+ * Aggregates token usage across all models in the session.
+ *
+ * @param metrics - Session metrics from uiTelemetryService
+ * @returns Usage object with token counts
+ */
+export declare function computeUsageFromMetrics(metrics: SessionMetrics): Usage;
+/**
+ * Build system message for SDK
+ *
+ * Constructs a system initialization message including tools, MCP servers,
+ * and model configuration. System messages are independent of the control
+ * system and are sent before every turn regardless of whether control
+ * system is available.
+ *
+ * Note: Control capabilities are NOT included in system messages. They
+ * are only included in the initialize control response, which is handled
+ * separately by SystemController.
+ *
+ * @param config - Config instance
+ * @param sessionId - Session identifier
+ * @param permissionMode - Current permission/approval mode
+ * @param allowedBuiltinCommandNames - Optional array of allowed built-in command names.
+ *   If not provided, defaults to empty array (only file commands will be included).
+ * @returns Promise resolving to CLISystemMessage
+ */
+export declare function buildSystemMessage(config: Config, sessionId: string, permissionMode: PermissionMode, allowedBuiltinCommandNames?: string[]): Promise<CLISystemMessage>;
+/**
+ * Creates an output update handler specifically for Task tool subagent execution.
+ * This handler monitors TaskResultDisplay updates and converts them to protocol messages
+ * using the unified adapter's subagent APIs. All emitted messages will have parent_tool_use_id set to
+ * the task tool's callId.
+ *
+ * @param config - Config instance for getting output format
+ * @param taskToolCallId - The task tool's callId to use as parent_tool_use_id for all subagent messages
+ * @param adapter - The unified adapter instance (JsonOutputAdapter or StreamJsonOutputAdapter)
+ * @returns An object containing the output update handler
+ */
+export declare function createTaskToolProgressHandler(config: Config, taskToolCallId: string, adapter: JsonOutputAdapterInterface | undefined): {
+    handler: OutputUpdateHandler;
+};
+/**
+ * Converts function response parts to a string representation.
+ * Handles functionResponse parts specially by extracting their output content.
+ *
+ * @param parts - Array of Part objects to convert
+ * @returns String representation of the parts
+ */
+export declare function functionResponsePartsToString(parts: Part[]): string;
+/**
+ * Extracts content from a tool call response for inclusion in tool_result blocks.
+ * Uses functionResponsePartsToString to properly handle functionResponse parts,
+ * which correctly extracts output content from functionResponse objects rather
+ * than simply concatenating text or JSON.stringify.
+ *
+ * @param response - Tool call response information
+ * @returns String content for the tool_result block, or undefined if no content available
+ */
+export declare function toolResultContent(response: ToolCallResponseInfo): string | undefined;

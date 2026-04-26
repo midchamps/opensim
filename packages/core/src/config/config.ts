@@ -44,8 +44,9 @@ import type { OpenGameProvidersSettings } from '../services/providerConfig.js';
 // Tools
 import { EditTool } from '../tools/edit.js';
 import { ExitPlanModeTool } from '../tools/exitPlanMode.js';
-import { GenerateAssetsTool } from '../tools/generate-assets.js';
-import { GenerateTilemapTool } from '../tools/generate-tilemap.js';
+// Game-domain asset tools — file-only (not registered in OpenSim).
+// import { GenerateAssetsTool } from '../tools/generate-assets.js';
+// import { GenerateTilemapTool } from '../tools/generate-tilemap.js';
 import { GlobTool } from '../tools/glob.js';
 import { GrepTool } from '../tools/grep.js';
 import { LSTool } from '../tools/ls.js';
@@ -61,8 +62,14 @@ import { SkillTool } from '../tools/skill.js';
 import { TaskTool } from '../tools/task.js';
 import { TodoWriteTool } from '../tools/todoWrite.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
-import { GameTypeClassifierTool } from '../tools/game-type-classifier.js';
-import { GenerateGDDTool } from '../tools/generate-gdd.js';
+// Game-domain tools live as files in tools/ but are no longer
+// registered — OpenSim is a science-simulator fork, so the LLM only
+// sees the simulation-domain tool surface.
+// import { GameTypeClassifierTool } from '../tools/game-type-classifier.js';
+// import { GenerateGDDTool } from '../tools/generate-gdd.js';
+import { SimulationTypeClassifierTool } from '../tools/simulation-type-classifier.js';
+import { GenerateProtocolTool } from '../tools/generate-protocol.js';
+import { GenerateSimulationAssetsTool } from '../tools/generate-simulation-assets.js';
 //import { CopyTemplateTool } from '../tools/copy-template.js';
 import { WebFetchTool } from '../tools/web-fetch.js';
 import { WebSearchTool } from '../tools/web-search/index.js';
@@ -1426,10 +1433,15 @@ export class Config {
     if (this.getWebSearchConfig()) {
       registerCoreTool(WebSearchTool, this);
     }
-    registerCoreTool(GameTypeClassifierTool, this);
-    registerCoreTool(GenerateGDDTool, this);
-    registerCoreTool(GenerateAssetsTool, this);
-    registerCoreTool(GenerateTilemapTool, this);
+    // Game-domain tools intentionally NOT registered (OpenSim fork).
+    // registerCoreTool(GameTypeClassifierTool, this);
+    // registerCoreTool(GenerateGDDTool, this);
+    // registerCoreTool(GenerateAssetsTool, this);
+    // registerCoreTool(GenerateTilemapTool, this);
+    // OpenSim simulation-domain tools (Phase 3+).
+    registerCoreTool(SimulationTypeClassifierTool, this);
+    registerCoreTool(GenerateProtocolTool, this);
+    registerCoreTool(GenerateSimulationAssetsTool, this);
     //registerCoreTool(CopyTemplateTool, this);
 
     await registry.discoverAllTools();

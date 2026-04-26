@@ -66,14 +66,18 @@ export function DigitalReadout({
       >
         {label}
       </Text>
-      {/* Value */}
+      {/* Value — uses drei's bundled default font (loading an external
+          font URL here would crash the whole React tree if the network
+          request fails, which is what happened on the first Gate-2
+          attempt). A bundled monospace LCD font can be added later via
+          /public/fonts and the `font={}` prop. */}
       <Text
         position={[0, height / 2 - 0.005, FRAME_THICKNESS / 2 + 0.001]}
         fontSize={0.04}
         color="#7ee787"
         anchorX="center"
         anchorY="middle"
-        font="https://fonts.gstatic.com/s/sharetechmono/v15/J7aHnp1uDWRBEqV98dVQztYldFcLowEF.woff"
+        letterSpacing={0.06}
       >
         {value}
       </Text>

@@ -9,11 +9,16 @@ import {
   type GenerateContentParameters,
   GenerateContentResponse,
 } from '@google/genai';
+// eslint-disable-next-line import/no-internal-modules
 import type { Config } from '../../config/config.js';
 import type { ContentGeneratorConfig } from '../contentGenerator.js';
+// eslint-disable-next-line import/no-internal-modules
 import type { OpenAICompatibleProvider } from './provider/index.js';
 import { OpenAIContentConverter } from './converter.js';
 import type { ErrorHandler, RequestContext } from './errorHandler.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 export interface PipelineConfig {
   cliConfig: Config;
@@ -45,6 +50,9 @@ export class ContentGenerationPipeline {
       userPromptId,
       false,
       async (openaiRequest) => {
+        if (process.env['OPENGAME_DEBUG_GEMINI']) {
+          this.dumpRequestForDebug(openaiRequest, 'execute');
+        }
         const openaiResponse = (await this.client.chat.completions.create(
           openaiRequest,
           {
@@ -69,6 +77,9 @@ export class ContentGenerationPipeline {
       userPromptId,
       true,
       async (openaiRequest, context) => {
+        if (process.env['OPENGAME_DEBUG_GEMINI']) {
+          this.dumpRequestForDebug(openaiRequest, 'executeStream');
+        }
         // Stage 1: Create OpenAI stream
         const stream = (await this.client.chat.completions.create(
           openaiRequest,
@@ -220,6 +231,87 @@ export class ContentGenerationPipeline {
     return true;
   }
 
+  /**
+   * OPENGAME_DEBUG_GEMINI=1 — write the full openaiRequest to a tmp file and
+   * log a compact summary to stderr (model, tool count, message count, body
+   * size). Each call writes a new file with a sortable timestamp; combined
+   * with the OpenAI SDK's own error output this is enough to pinpoint a 400
+   * caused by the request body (e.g. unsupported schema feature).
+   */
+  private dumpRequestForDebug(
+    openaiRequest: OpenAI.Chat.ChatCompletionCreateParams,
+    label: string,
+  ): void {
+    try {
+      const dir = path.join(os.tmpdir(), 'opengame-debug-gemini');
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const file = path.join(dir, `${stamp}-${label}.json`);
+      const body = JSON.stringify(openaiRequest, null, 2);
+      fs.writeFileSync(file, body, 'utf-8');
+      const toolNames = (openaiRequest.tools ?? [])
+        .map((t) => (t.type === 'function' ? t.function.name : `(${t.type})`))
+        .join(',');
+      process.stderr.write(
+        `[opengame-debug-gemini] ${label} model=${openaiRequest.model} ` +
+          `messages=${openaiRequest.messages?.length ?? 0} ` +
+          `tools=${openaiRequest.tools?.length ?? 0} ` +
+          `body=${body.length}B file=${file}\n` +
+          `[opengame-debug-gemini]   tool-names=${toolNames}\n`,
+      );
+    } catch (e) {
+      process.stderr.write(
+        `[opengame-debug-gemini] dump failed: ${(e as Error).message}\n`,
+      );
+    }
+  }
+
+  private dumpDebugMarker(msg: string): void {
+    try {
+      const dir = path.join(os.tmpdir(), 'opengame-debug-gemini');
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      fs.writeFileSync(
+        path.join(dir, `${stamp}-marker.txt`),
+        msg + '\n',
+        'utf-8',
+      );
+    } catch {
+      /* swallow */
+    }
+  }
+
+  private dumpErrorForDebug(error: unknown): void {
+    try {
+      const dir = path.join(os.tmpdir(), 'opengame-debug-gemini');
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const e = error as {
+        status?: number;
+        message?: string;
+        error?: unknown;
+        response?: { body?: unknown; status?: number };
+        cause?: unknown;
+      };
+      const detail = {
+        message: e?.message,
+        status: e?.status,
+        responseStatus: e?.response?.status,
+        responseBody: e?.response?.body,
+        innerError: e?.error,
+        cause: e?.cause,
+        stack: (error as Error)?.stack,
+      };
+      fs.writeFileSync(
+        path.join(dir, `${stamp}-error.json`),
+        JSON.stringify(detail, null, 2),
+        'utf-8',
+      );
+    } catch {
+      /* swallow */
+    }
+  }
+
   private async buildRequest(
     request: GenerateContentParameters,
     userPromptId: string,
@@ -342,6 +434,12 @@ export class ContentGenerationPipeline {
   ): Promise<T> {
     const context = this.createRequestContext(userPromptId, isStreaming);
 
+    if (process.env['OPENGAME_DEBUG_GEMINI']) {
+      this.dumpDebugMarker(
+        `enter-executeWithErrorHandling streaming=${isStreaming}`,
+      );
+    }
+
     try {
       const openaiRequest = await this.buildRequest(
         request,
@@ -354,6 +452,9 @@ export class ContentGenerationPipeline {
       context.duration = Date.now() - context.startTime;
       return result;
     } catch (error) {
+      if (process.env['OPENGAME_DEBUG_GEMINI']) {
+        this.dumpErrorForDebug(error);
+      }
       // Use shared error handling logic
       return await this.handleError(error, context, request);
     }

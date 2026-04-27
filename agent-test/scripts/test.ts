@@ -1,4 +1,25 @@
-import 'dotenv/config';
+// `.env` MUST override the parent shell — otherwise a stray
+// `OPENAI_API_KEY=sk-proj-...` exported in the user's shell config silently
+// shadows the project's Gemini API key, and every request lands on
+// generativelanguage.googleapis.com with the wrong credential
+// (returns 400 "API key not valid"). Default `dotenv/config` import does not
+// override, so we call config() explicitly.
+import { config as loadDotenv } from 'dotenv';
+import { existsSync } from 'fs';
+import * as nodePath from 'path';
+import { fileURLToPath as _fileURL } from 'url';
+const _here = nodePath.dirname(_fileURL(import.meta.url));
+// Walk up from scripts/ to find a .env (agent-test/.env, then opensim/.env).
+const _envCandidates = [
+  nodePath.join(_here, '..', '.env'),
+  nodePath.join(_here, '..', '..', '.env'),
+];
+const _envPath = _envCandidates.find((p) => existsSync(p));
+if (_envPath) {
+  loadDotenv({ path: _envPath, override: true });
+} else {
+  loadDotenv({ override: true });
+}
 import {
   query,
   isSDKAssistantMessage,
@@ -68,6 +89,13 @@ async function prepareTestEnvironment(outputDir: string): Promise<void> {
   console.log(`✅ System prompt can be checked in: ${outputSystemMd}`);
   console.log(`📁 TEMPLATES_DIR: ${templatesDir}`);
   console.log(`📁 DOCS_DIR: ${docsDir}`);
+  const k = process.env.OPENAI_API_KEY ?? '';
+  console.log(
+    `🔑 OPENAI_API_KEY: ${k.slice(0, 6)}...${k.slice(-4)} (envPath=${_envPath ?? '<auto>'})`,
+  );
+  console.log(
+    `🌐 OPENAI_BASE_URL: ${process.env.OPENAI_BASE_URL ?? '<unset>'}`,
+  );
 }
 
 async function test(): Promise<TestResult> {
